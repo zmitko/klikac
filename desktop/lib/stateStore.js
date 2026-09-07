@@ -12,11 +12,11 @@ const DEFAULT_STATE = {
   wifiSsid: "",
   wifiPassword: "",
   slots: [
-    { name: "AFK ASSIST", seq: "F1,D2,F2,D,F5,D" },
-    { name: "REBUFF", seq: "F3,D,F7,D900" },
-    { name: "BODY TO MIND", seq: "F4,D,F5,D60" },
-    { name: "", seq: "" },
-    { name: "", seq: "" },
+    { name: "AFK ASSIST", seq: "F1,D2,F2,D,F5,D", enabled: true },
+    { name: "REBUFF", seq: "F3,D,F7,D900", enabled: true },
+    { name: "BODY TO MIND", seq: "F4,D,F5,D60", enabled: true },
+    { name: "", seq: "", enabled: false },
+    { name: "", seq: "", enabled: false },
   ],
 };
 
@@ -28,13 +28,32 @@ function clampDelay(n, fallback) {
   return Math.min(5000, Math.max(1, v));
 }
 
-function normalizeSlots(slots) {
+function activeIndexSet(macroActive) {
+  const set = new Set();
+  String(macroActive || "").split(",").forEach((part) => {
+    if (["1", "2", "3", "4", "5"].includes(part)) {
+      set.add(Number(part) - 1);
+    }
+  });
+  return set;
+}
+
+function normalizeSlots(slots, macroActive) {
+  const hasEnabled = Array.isArray(slots) && slots.some((s) => s && typeof s.enabled === "boolean");
+  const legacy = hasEnabled ? null : activeIndexSet(macroActive == null ? "1,2,3" : macroActive);
   const out = [];
   for (let i = 0; i < 5; i++) {
     const src = Array.isArray(slots) ? slots[i] : null;
+    let enabled = false;
+    if (src && typeof src.enabled === "boolean") {
+      enabled = src.enabled;
+    } else if (legacy) {
+      enabled = legacy.has(i);
+    }
     out.push({
       name: src && typeof src.name === "string" ? src.name.slice(0, 40) : "",
       seq: src && typeof src.seq === "string" ? src.seq.slice(0, 384) : "",
+      enabled,
     });
   }
   return out;
@@ -66,10 +85,6 @@ class StateStore {
     next.mouseBridge = !!next.mouseBridge;
     next.wifiSsid = String(next.wifiSsid || "").slice(0, 32);
     next.wifiPassword = String(next.wifiPassword || "").slice(0, 64);
-    next.macroActive = String(next.macroActive || "1")
-      .replace(/['"]/g, "")
-      .replace(/\s+/g, "")
-      .slice(0, 16);
     next.delayMin = clampDelay(next.delayMin, 200);
     next.delayMax = clampDelay(next.delayMax, 800);
     if (next.delayMax < next.delayMin) {
@@ -77,7 +92,11 @@ class StateStore {
       next.delayMin = next.delayMax;
       next.delayMax = tmp;
     }
-    next.slots = normalizeSlots(next.slots);
+    next.slots = normalizeSlots(next.slots, next.macroActive);
+    next.macroActive = next.slots
+      .map((slot, i) => (slot.enabled ? String(i + 1) : ""))
+      .filter(Boolean)
+      .join(",");
     return next;
   }
 
@@ -101,13 +120,11 @@ class StateStore {
     const dmin = this.state.delayMin;
     const dmax = this.state.delayMax;
     const lines = [];
-    const parts = String(this.state.macroActive || "").split(",");
-    for (const part of parts) {
-      if (!["1", "2", "3", "4", "5"].includes(part)) {
+    for (const slot of this.state.slots) {
+      if (!slot.enabled) {
         continue;
       }
-      const slot = this.state.slots[Number(part) - 1];
-      const seq = slot && slot.seq ? slot.seq.trim() : "";
+      const seq = slot.seq ? slot.seq.trim() : "";
       if (!seq) {
         continue;
       }

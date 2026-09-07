@@ -15,6 +15,9 @@ for (let i = 0; i < 5; i++) {
   const wrap = document.createElement("div");
   wrap.className = "slot";
   wrap.innerHTML = `
+    <label class="slot-on" title="Aktivní v makru">
+      <input type="checkbox" data-slot="${i}" data-field="enabled">
+    </label>
     <span class="n">${i + 1}</span>
     <div>
       <input class="name" data-slot="${i}" data-field="name" placeholder="volitelný název">
@@ -58,9 +61,6 @@ function apply(snap) {
   const device = snap.device || {};
 
   const ae = document.activeElement;
-  if (ae !== $("macro-active")) {
-    $("macro-active").value = ui.macroActive || "";
-  }
   $("macro-loop").checked = !!ui.macroLoop;
   if (ae !== $("delay-min")) {
     $("delay-min").value = ui.delayMin;
@@ -95,8 +95,16 @@ function apply(snap) {
   }
 
   (ui.slots || []).forEach((slot, i) => {
+    const enabled = document.querySelector(`input[data-slot="${i}"][data-field="enabled"]`);
     const name = document.querySelector(`input[data-slot="${i}"][data-field="name"]`);
     const seq = document.querySelector(`input[data-slot="${i}"][data-field="seq"]`);
+    const row = enabled && enabled.closest(".slot");
+    if (enabled && document.activeElement !== enabled) {
+      enabled.checked = !!slot.enabled;
+    }
+    if (row) {
+      row.classList.toggle("is-on", !!slot.enabled);
+    }
     if (name && document.activeElement !== name) {
       name.value = slot.name || "";
     }
@@ -175,10 +183,10 @@ function collectUiPatch() {
   const slots = [...document.querySelectorAll(".slot")].map((_, i) => ({
     name: document.querySelector(`input[data-slot="${i}"][data-field="name"]`).value,
     seq: document.querySelector(`input[data-slot="${i}"][data-field="seq"]`).value,
+    enabled: document.querySelector(`input[data-slot="${i}"][data-field="enabled"]`).checked,
   }));
   return {
     controllerEnabled: true,
-    macroActive: $("macro-active").value,
     macroLoop: $("macro-loop").checked,
     delayMin: Number($("delay-min").value),
     delayMax: Number($("delay-max").value),
@@ -218,7 +226,6 @@ $("wifi-ssid").addEventListener("input", scheduleSave);
 $("wifi-pass").addEventListener("input", scheduleSave);
 $("wifi-ssid").addEventListener("change", scheduleSave);
 $("wifi-pass").addEventListener("change", scheduleSave);
-$("macro-active").addEventListener("change", scheduleSave);
 $("delay-min").addEventListener("input", () => {
   $("dmin-val").textContent = $("delay-min").value;
 });

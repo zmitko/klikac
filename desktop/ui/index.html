@@ -14,10 +14,6 @@
       <div class="col-left">
         <article class="card col-card">
           <h2>Chování</h2>
-          <label class="field">
-            <span>Aktivní Makra</span>
-            <input type="text" id="macro-active" maxlength="16" placeholder="1,2,3">
-          </label>
           <div class="row-toggle">
             <span>Smyčka dokola</span>
             <label class="switch">
@@ -25,14 +21,19 @@
               <span class="slider"></span>
             </label>
           </div>
-          <label class="field range">
-            <span>D min <b id="dmin-val">200</b></span>
-            <input type="range" id="delay-min" min="50" max="5000" step="1">
-          </label>
-          <label class="field range">
-            <span>D max <b id="dmax-val">800</b></span>
-            <input type="range" id="delay-max" min="50" max="5000" step="1">
-          </label>
+          <div class="delay-block">
+            <div class="delay-label">Rozsah náhodné prodlevy</div>
+            <div class="delay-row">
+              <label class="field range">
+                <span>min <b id="dmin-val">200</b></span>
+                <input type="range" id="delay-min" min="50" max="5000" step="1">
+              </label>
+              <label class="field range">
+                <span>max <b id="dmax-val">800</b></span>
+                <input type="range" id="delay-max" min="50" max="5000" step="1">
+              </label>
+            </div>
+          </div>
           <button type="button" class="run-btn" id="macro-run" aria-pressed="false">
             <span class="run-dot"></span>
             <span class="run-label">Spustit makro</span>
