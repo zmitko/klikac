@@ -9,6 +9,8 @@ const DEFAULT_STATE = {
   delayMax: 800,
   macroRunning: false,
   mouseBridge: false,
+  wifiSsid: "",
+  wifiPassword: "",
   slots: [
     { name: "AFK ASSIST", seq: "F1,D2,F2,D,F5,D" },
     { name: "REBUFF", seq: "F3,D,F7,D900" },
@@ -62,6 +64,8 @@ class StateStore {
     next.macroLoop = !!next.macroLoop;
     next.macroRunning = !!next.macroRunning;
     next.mouseBridge = !!next.mouseBridge;
+    next.wifiSsid = String(next.wifiSsid || "").slice(0, 32);
+    next.wifiPassword = String(next.wifiPassword || "").slice(0, 64);
     next.macroActive = String(next.macroActive || "1")
       .replace(/['"]/g, "")
       .replace(/\s+/g, "")

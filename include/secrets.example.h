@@ -1,11 +1,6 @@
 #pragma once
 
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
-
-#define MQTT_HOST "192.168.1.134"
-#define MQTT_PORT 1883
-#define MQTT_USER "YOUR_MQTT_USER"
-#define MQTT_PASSWORD "YOUR_MQTT_PASSWORD"
-
-#define OTA_PASSWORD "YOUR_OTA_PASSWORD"
+// Fallback when destička has no USB provision yet (NVS empty).
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
+#define MQTT_HOST ""

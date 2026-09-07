@@ -1,32 +1,164 @@
 # Klikač
 
-Windows tray aplikace + firmware ESP32-S3 (USB HID klávesnice/myš) přes MQTT.
+Windows tray aplikace + firmware pro **ESP32-S3**. Destička se na cílovém PC tváří jako USB klávesnice a myš. Ovládání běží na jiném počítači ve stejné Wi‑Fi.
+
+MQTT broker je **součást Klikače** — nic dalšího (Home Assistant, Mosquitto) k provozu nepotřebuješ.
 
 Releasy: [github.com/zmitko/klikac](https://github.com/zmitko/klikac)
 
-## Verze
+## Jak to funguje
 
-Zdroj pravdy je soubor `VERSION` (teď `1.0.0`). Stejné číslo mají Klikač i firmware destičky.
+```mermaid
+flowchart LR
+  subgraph PC1["PC1 — ovládání"]
+    App["Klikač tray<br/>MQTT :1883"]
+  end
+  subgraph Board["ESP32-S3"]
+    FW["Wi-Fi + HID"]
+  end
+  subgraph PC2["PC2 — hra"]
+    Game["USB klávesnice / myš"]
+  end
+  App -->|LAN MQTT| FW
+  FW -->|native USB| Game
+```
 
-Nový release:
+1. **PC1** — Klikač v trayi, makro, F-klávesy, přenos kliků myši, MQTT broker.
+2. **Destička** — Wi‑Fi na stejné síti, MQTT na IP PC1. HID USB do PC2.
+3. **PC2** — vidí obyčejné USB zařízení `USB Input`.
 
-1. Změň `VERSION` (např. `1.0.1`).
-2. V GitHub repu nastav secrets pro stavbu firmware:
-   `WIFI_SSID`, `WIFI_PASSWORD`, `MQTT_HOST`, `MQTT_PORT`, `MQTT_USER`, `MQTT_PASSWORD`, `OTA_PASSWORD`
-3. `git tag v1.0.1 && git push origin v1.0.1`  
-   nebo v Actions spusť workflow **Release**.
+Dva USB na destičce se nepletou:
 
-V releasu je instalátor `Klikac-Setup-x.y.z.exe`, `firmware.bin` (Wi-Fi OTA), `firmware.elf` / `firmware-factory.bin` (první USB flash) a `espflash.exe`.
+| Kabel | Kam | K čemu |
+| --- | --- | --- |
+| CH343 / UART (COM) | PC1 | první flash a zápis Wi‑Fi |
+| Native USB (OTG) | PC2 | klávesnice a myš |
 
-## Aktualizace aplikace
+## Inicializace (PC1 + PC2)
 
-Klikač po startu zkontroluje GitHub. Když je novější verze, vpravo dole je **Aktualizovat** — stáhne instalátor a spustí ho.
+Potřebuješ **dva USB kabely** (nebo dva porty na destičce) a **stejnou Wi‑Fi** na obou PC.
 
-## Firmware destičky
+### 1) PC1 — nainstaluj Klikač a otevři síť
 
-V kartě **Destička** je **Nahrát firmware**:
+1. Na **PC1** (ovládání, ne herní stroj) nainstaluj Klikač z [Releases](https://github.com/zmitko/klikac/releases), nebo při vývoji spusť `desktop/start.cmd`.
+2. Klikač nech běžet (zavření okna ho jen schová do traye — vypíná se přes tray **Exit**).
+3. V okně zkontroluj, že dole u destičky svítí **broker** s LAN IP PC1, např. `broker 192.168.1.109:1883`.
+4. Jednou ve **správcovském** PowerShellu povol MQTT (když to Klikač bez admin práv neudělal sám):
 
-1. **USB (první nahrání)** — destičku zapoj flash kabelem (COM / CH343) do PC1, případně drž BOOT. Klikač najde port a nahraje image.
-2. **Wi-Fi** — když USB není, pošle firmware na IP destičky (ArduinoOTA). Novější firmware umí i stáhnout binárku sám (MQTT `esp32kbd/ota`).
+```powershell
+netsh advfirewall firewall add rule name="Klikac MQTT" dir=in action=allow protocol=TCP localport=1883 profile=any
+```
 
-Do `desktop/config.json` dej stejné `otaPassword` jako v `include/secrets.h`.
+PC1 musí zůstat na Wi‑Fi / LAN, jinak destička broker nenajde.
+
+### 2) PC1 — první nahrání destičky přes USB
+
+Tohle se dělá **jen jednou** (nebo když destička zapomene Wi‑Fi).
+
+1. V Klikači rozbal **Wi-Fi pro USB init** (šipka pod **Inicializovat přes USB**).
+2. Vyplň **SSID a heslo sítě, na které je PC1** (stejnou bude používat destička u PC2).
+3. Destičku zapoj **programovacím USB (CH343 / COM)** do PC1. Native USB (HID) teď nezapojuj.
+4. Klikni **Inicializovat přes USB**.
+5. V **Protokolu** má být nahrání firmware a pak `KLOG apply mqtt=` + IP PC1.
+6. Po `Hotovo` programovací kabel z PC1 **odpoj**.
+
+Když destička po flashi skončí v download módu a Wi‑Fi se nezapíše, zkus init znovu — Klikač po nahrání posílá SSID/heslo/IP po sérii, GPIO0 nesmí zůstat stažené.
+
+### 3) PC2 — zapoj HID a hraj
+
+1. **PC2** (hra) dej na **stejnou Wi‑Fi** jako PC1. Klikač se na PC2 neinstaluje.
+2. Destičku zapoj **native USB (OTG / HID)** do PC2. Windows má ukázat zařízení `USB Input` (klávesnice + myš).
+3. Na PC1 nech Klikač běžet. Stav má přejít na **Destička připojena**, uvidíš IP destičky a `USB připojeno`.
+4. V Klikači zmáčkni F-klávesu / LMB — na PC2 to má jít do hry, jako bys klepal na klávesnici u PC2.
+
+Přenos myši (přepínač **Přenos myši PC1 → PC2**) posílá kliky z PC1 na destičku. Kliky v okně Klikače se schválně neposílají.
+
+### Test na jednom PC
+
+Stejný postup, jen native USB necháš v PC1 místo PC2. Programovací CH343 a HID jsou různé konektory — samotný CH343 klávesnici neudělá.
+
+### Další firmware (destička už je u PC2)
+
+Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat firmware (Wi-Fi)**. Klikač pošle novou verzi po síti (ArduinoOTA, případně stažení přes MQTT).
+
+### Když to neběží
+
+| Co vidíš | Co zkontrolovat |
+| --- | --- |
+| `Klikač se nepřipojuje k brokeru` | restart Klikače na PC1, port 1883 volný |
+| **Destička offline**, broker IP sedí | stejná Wi‑Fi, firewall 1883, znovu USB init (Wi‑Fi/IP v destičce) |
+| MQTT online, ale nic se nepíše | native USB je v **PC2**, ne jen CH343 v PC1 |
+| Windows nevidí `USB Input` | špatný kabel/port — HID je OTG, ne UART |
+
+## Co umí aplikace
+
+- F1–F8, LMB, RMB, Enter
+- až 5 sekvencí, náhodné prodlevy D min / D max, smyčka
+- přenos kliků myši z PC1 na PC2 (mimo okno Klikače)
+- protokol MQTT / USB
+- **Inicializovat přes USB** — první nahrání + Wi‑Fi
+- **Aktualizovat firmware (Wi-Fi)** — nová verze, destička už visí na PC2
+
+## Makra
+
+Tokeny v sekvenci (čárkou):
+
+| Token | Význam |
+| --- | --- |
+| `F1` … `F8` | F-klávesa |
+| `LC` / `RC` | levé / pravé tlačítko myši |
+| `ENTER` | Enter |
+| `D` | pauza v rozsahu D min–D max |
+| `D900` | pauza 900 ms |
+| `D2` | pauza 2 s |
+
+Příklad: `F1,D2,F2,D,F5,D`
+
+## MQTT (interní síť)
+
+Broker poslouchá na `0.0.0.0:1883`. Klikač se připojuje na `127.0.0.1`, destička na LAN IP PC1.
+
+Přihlášení je v kódu napevno (`klikac` / `klikac`) — počítá se s tím, že to běží jen u vás na LAN.
+
+| Topic | Směr | Účel |
+| --- | --- | --- |
+| `esp32kbd/command` | app → destička | `F1`–`F8`, `ENTER`, `LC`, `RC` |
+| `esp32kbd/macro` | app → destička | start/stop sekvence |
+| `esp32kbd/status` | destička | `online` / `offline` |
+| `esp32kbd/usb` | destička | HID připojeno |
+| `esp32kbd/ack` | destička | potvrzení příkazu |
+| `esp32kbd/ip` | destička | IP destičky |
+| `esp32kbd/fw` | destička | verze firmware |
+| `esp32kbd/ota` | app → destička | URL pro HTTP update |
+
+## Hardware
+
+- ESP32-S3 **N16R8** (16 MB flash)
+- programovací USB: CH343 / CH340 (COM)
+- HID: native USB (CDC na bootu je vypnuté)
+
+## Vývoj
+
+Verze je v souboru [`VERSION`](VERSION) (teď `1.0.0`). Tag `v1.0.1` spustí GitHub Actions — NSIS instalátor + firmware. Wi‑Fi se do binárky nepeče.
+
+```text
+desktop/     Klikač (Electron)
+src/         firmware
+include/     config + secrets (prázdné, Wi-Fi jde z appky)
+ha/          starý Home Assistant PoC, k provozu se nepoužívá
+```
+
+```bat
+cd desktop
+npm install
+start.cmd
+```
+
+Firmware (Windows: projekt na UNC disku spusť přes `pushd`, jinak PlatformIO spadne):
+
+```bat
+pushd \\Nas\cesta\k\L2_BOT
+pio run -e esp32-s3-n16r8
+```
+
+Electron runtime při vývoji: `%LOCALAPPDATA%\ovladac-electron\electron.exe`.

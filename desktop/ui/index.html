@@ -53,10 +53,12 @@
         </article>
       </div>
 
-      <article class="card col-card">
-        <h2>Sekvence</h2>
-        <div id="slots" class="slots"></div>
-      </article>
+      <div class="col-mid">
+        <article class="card col-card">
+          <h2>Sekvence</h2>
+          <div id="slots" class="slots"></div>
+        </article>
+      </div>
 
       <div class="col-right">
         <div class="btn-row">
@@ -83,9 +85,28 @@
               <div class="mono" id="esp-ip">—</div>
               <div class="muted" id="esp-meta"></div>
               <div class="muted tiny" id="fw-meta">firmware —</div>
+              <div class="muted tiny" id="broker-meta">broker —</div>
             </div>
           </div>
-          <button type="button" class="fw-btn" id="flash-fw">Nahrát firmware</button>
+          <button type="button" class="fw-btn" id="flash-fw">Inicializovat přes USB</button>
+          <div class="wifi-fold" id="wifi-fold">
+            <button type="button" class="wifi-fold-btn" id="wifi-fold-btn" aria-expanded="false">
+              <span id="wifi-fold-label">Wi-Fi pro USB init</span>
+            </button>
+            <div class="wifi-fold-body">
+              <div class="wifi-fold-inner">
+                <label class="field">
+                  <span>Wi-Fi SSID</span>
+                  <input type="text" id="wifi-ssid" maxlength="32" placeholder="název sítě">
+                </label>
+                <label class="field">
+                  <span>Wi-Fi heslo</span>
+                  <input type="password" id="wifi-pass" maxlength="64" placeholder="heslo sítě">
+                </label>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="fw-btn secondary" id="ota-fw">Aktualizovat firmware (Wi-Fi)</button>
           <div class="muted tiny" id="fw-log"></div>
         </article>
 
@@ -100,6 +121,11 @@
         </article>
       </div>
     </section>
+
+    <article class="card log-card">
+      <h2>Protokol</h2>
+      <pre id="proto-log" class="proto-log"></pre>
+    </article>
 
     <div class="toast" id="toast" hidden></div>
   </div>

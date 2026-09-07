@@ -3,7 +3,7 @@
   "productName": "Klikač",
   "version": "1.0.0",
   "private": true,
-  "description": "Klikač – Windows tray ovladač ESP32 HID, stejný MQTT protokol jako Home Assistant",
+  "description": "Klikač – Windows tray ovladač ESP32 HID s vestavěným MQTT brokerem",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "aedes": "^1.1.2",
     "electron-updater": "^6.8.9",
     "mqtt": "^5.10.4"
   },

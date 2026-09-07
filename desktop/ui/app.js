@@ -74,6 +74,15 @@ function apply(snap) {
   $("macro-run").setAttribute("aria-pressed", ui.macroRunning ? "true" : "false");
   $("macro-run").querySelector(".run-label").textContent = ui.macroRunning ? "Zastavit makro" : "Spustit makro";
   $("mouse-bridge").checked = !!ui.mouseBridge;
+  if (document.activeElement !== $("wifi-ssid")) {
+    $("wifi-ssid").value = ui.wifiSsid || "";
+  }
+  if (document.activeElement !== $("wifi-pass")) {
+    $("wifi-pass").value = ui.wifiPassword || "";
+  }
+  $("wifi-fold-label").textContent = ui.wifiSsid
+    ? `Wi-Fi pro USB init · ${ui.wifiSsid}`
+    : "Wi-Fi pro USB init";
   const mouse = snap.mouse || {};
   if (!ui.mouseBridge) {
     $("mouse-meta").textContent = "vypnuto";
@@ -101,7 +110,7 @@ function apply(snap) {
   const usbOk = device.usb === "connected";
   $("esp-dot").className = `dot ${mqttOk && live ? "on" : mqttOk ? "warn" : ""}`;
   $("esp-status").textContent = !mqttOk
-    ? "MQTT odpojeno"
+    ? "Klikač se nepřipojuje k brokeru"
     : live
       ? "Destička připojena"
       : "Destička offline";
@@ -114,6 +123,10 @@ function apply(snap) {
     bits.push(`ack ${device.ack}${device.ackAt ? " · " + ago(device.ackAt) : ""}`);
   }
   $("esp-meta").textContent = bits.join(" · ");
+  const net = snap.net || {};
+  $("broker-meta").textContent = net.lanIp
+    ? `broker ${net.lanIp}:${net.port || 1883}${net.clients ? ` · ${net.clients} klient` : ""}`
+    : "broker —";
 
   const fw = snap.firmware || {};
   const deviceFw = device.fw || fw.current || "—";
@@ -124,7 +137,9 @@ function apply(snap) {
   $("fw-log").textContent = fw.error || fw.log || "";
   const flashing = fw.status === "preparing" || fw.status === "downloading" || fw.status === "uploading";
   $("flash-fw").disabled = flashing;
-  $("flash-fw").textContent = flashing ? "Nahrávám…" : "Nahrát firmware";
+  $("flash-fw").textContent = flashing && fw.method === "usb" ? "Inicializuji…" : "Inicializovat přes USB";
+  $("ota-fw").disabled = flashing || !device.ip;
+  $("ota-fw").textContent = flashing && fw.method === "wifi" ? "Nahrávám přes Wi-Fi…" : "Aktualizovat firmware (Wi-Fi)";
 
   const upd = snap.update || {};
   $("app-ver").textContent = upd.current ? `v${upd.current}` : "";
@@ -144,6 +159,16 @@ function apply(snap) {
     $("upd-meta").textContent = "aktuální";
     updBtn.hidden = true;
   }
+
+  const logEl = $("proto-log");
+  if (logEl) {
+    const lines = snap.log || [];
+    const text = lines.length ? lines.join("\n") : "čekám…";
+    if (logEl.textContent !== text) {
+      logEl.textContent = text;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
 }
 
 function collectUiPatch() {
@@ -159,6 +184,8 @@ function collectUiPatch() {
     delayMax: Number($("delay-max").value),
     macroRunning: $("macro-run").getAttribute("aria-pressed") === "true",
     mouseBridge: $("mouse-bridge").checked,
+    wifiSsid: $("wifi-ssid").value,
+    wifiPassword: $("wifi-pass").value,
     slots,
   };
 }
@@ -183,6 +210,14 @@ $("macro-run").addEventListener("click", () => {
   scheduleSave();
 });
 $("mouse-bridge").addEventListener("change", scheduleSave);
+$("wifi-fold-btn").addEventListener("click", () => {
+  const open = $("wifi-fold").classList.toggle("open");
+  $("wifi-fold-btn").setAttribute("aria-expanded", open ? "true" : "false");
+});
+$("wifi-ssid").addEventListener("input", scheduleSave);
+$("wifi-pass").addEventListener("input", scheduleSave);
+$("wifi-ssid").addEventListener("change", scheduleSave);
+$("wifi-pass").addEventListener("change", scheduleSave);
 $("macro-active").addEventListener("change", scheduleSave);
 $("delay-min").addEventListener("input", () => {
   $("dmin-val").textContent = $("delay-min").value;
@@ -209,10 +244,29 @@ document.body.addEventListener("click", async (ev) => {
 $("flash-fw").addEventListener("click", async () => {
   $("flash-fw").disabled = true;
   try {
-    apply(await window.ovladac.getState());
+    apply(await window.ovladac.setState(collectUiPatch()));
+    if (!$("wifi-ssid").value.trim()) {
+      $("wifi-fold").classList.add("open");
+      $("wifi-fold-btn").setAttribute("aria-expanded", "true");
+      $("flash-fw").disabled = false;
+      toast("Nejdřív vyplň Wi-Fi pod tlačítkem.");
+      return;
+    }
     const snap = await window.ovladac.flashFirmware();
     apply(await window.ovladac.getState());
     toast(snap.log || "Firmware odeslán");
+  } catch (err) {
+    toast(err.message);
+    apply(await window.ovladac.getState());
+  }
+});
+
+$("ota-fw").addEventListener("click", async () => {
+  $("ota-fw").disabled = true;
+  try {
+    const snap = await window.ovladac.otaFirmware();
+    apply(await window.ovladac.getState());
+    toast(snap.log || "Firmware odeslán přes Wi-Fi");
   } catch (err) {
     toast(err.message);
     apply(await window.ovladac.getState());

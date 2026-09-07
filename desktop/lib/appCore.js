@@ -9,10 +9,10 @@ const COMMANDS = new Set([
 ]);
 
 class AppCore {
-  constructor({ statePath, mqtt, targetPc, onChange }) {
+  constructor({ statePath, mqtt, targetPc, onChange, onLog }) {
     this.onChange = onChange;
     this.store = new StateStore(statePath);
-    this.mqtt = new MqttBridge(mqtt, () => this.emit());
+    this.mqtt = new MqttBridge(mqtt, () => this.emit(), onLog);
     this.pcPing = new PcPing(targetPc.host || "", targetPc.name || "PC");
     this.mouse = new MouseBridge({
       onClick: (payload) => {

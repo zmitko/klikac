@@ -12,6 +12,7 @@
 #include <HTTPUpdate.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
+#include <Preferences.h>
 #include <esp_system.h>
 #include "USB.h"
 #include "USBHIDKeyboard.h"
@@ -61,6 +62,12 @@ static uint32_t last_button_ms = 0;
 static char mqtt_client_id[24];
 static char pending_ota_url[HTTP_OTA_URL_MAX];
 static volatile bool http_ota_req = false;
+static char wifi_ssid[33];
+static char wifi_pass[65];
+static char mqtt_host[48];
+static char serial_line[220];
+static size_t serial_len = 0;
+static Preferences prefs;
 
 static const uint8_t kFnHid[9] = {
     0, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8,
@@ -603,8 +610,105 @@ static void mqtt_disconnect_cleanup() {
     mqtt_ready_at = 0;
 }
 
+static void cfg_save() {
+    prefs.begin("klikac", false);
+    prefs.putString("wifi", wifi_ssid);
+    prefs.putString("pass", wifi_pass);
+    prefs.putString("mqtt", mqtt_host);
+    prefs.end();
+}
+
+static void cfg_load() {
+    wifi_ssid[0] = 0;
+    wifi_pass[0] = 0;
+    mqtt_host[0] = 0;
+    // RW: read-only begin() na prázdném NVS vrací NOT_FOUND a nic nenačte.
+    if (!prefs.begin("klikac", false)) {
+        Serial.println("KLOG nvs-fail");
+    }
+    const String w = prefs.getString("wifi", "");
+    const String p = prefs.getString("pass", "");
+    const String m = prefs.getString("mqtt", "");
+    prefs.end();
+    if (w.length() > 0) {
+        strncpy(wifi_ssid, w.c_str(), sizeof(wifi_ssid) - 1);
+    } else {
+        strncpy(wifi_ssid, WIFI_SSID, sizeof(wifi_ssid) - 1);
+    }
+    if (p.length() > 0) {
+        strncpy(wifi_pass, p.c_str(), sizeof(wifi_pass) - 1);
+    } else {
+        strncpy(wifi_pass, WIFI_PASSWORD, sizeof(wifi_pass) - 1);
+    }
+    if (m.length() > 0) {
+        strncpy(mqtt_host, m.c_str(), sizeof(mqtt_host) - 1);
+    } else {
+        strncpy(mqtt_host, MQTT_HOST, sizeof(mqtt_host) - 1);
+    }
+}
+
+static void cfg_handle_line(char *line) {
+    if (strncmp(line, "KCFG WIFI ", 10) == 0) {
+        strncpy(wifi_ssid, line + 10, sizeof(wifi_ssid) - 1);
+        wifi_ssid[sizeof(wifi_ssid) - 1] = 0;
+        Serial.println("KLOG wifi-ok");
+        return;
+    }
+    if (strncmp(line, "KCFG PASS ", 10) == 0) {
+        strncpy(wifi_pass, line + 10, sizeof(wifi_pass) - 1);
+        wifi_pass[sizeof(wifi_pass) - 1] = 0;
+        Serial.println("KLOG pass-ok");
+        return;
+    }
+    if (strncmp(line, "KCFG MQTT ", 10) == 0) {
+        strncpy(mqtt_host, line + 10, sizeof(mqtt_host) - 1);
+        mqtt_host[sizeof(mqtt_host) - 1] = 0;
+        Serial.println("KLOG mqtt-ok");
+        return;
+    }
+    if (strcmp(line, "KCFG APPLY") == 0) {
+        cfg_save();
+        Serial.print("KLOG apply mqtt=");
+        Serial.println(mqtt_host);
+        if (mqtt.connected()) {
+            mqtt.disconnect();
+            mqtt_disconnect_cleanup();
+        }
+        if (wifi_ssid[0]) {
+            WiFi.disconnect();
+            WiFi.begin(wifi_ssid, wifi_pass);
+        }
+    }
+}
+
+static void serial_poll() {
+    while (Serial.available() > 0) {
+        const char c = (char)Serial.read();
+        if (c == '\r') {
+            continue;
+        }
+        if (c == '\n') {
+            serial_line[serial_len] = 0;
+            if (serial_len > 0) {
+                cfg_handle_line(serial_line);
+            }
+            serial_len = 0;
+            continue;
+        }
+        if (serial_len + 1 < sizeof(serial_line)) {
+            serial_line[serial_len++] = c;
+        } else {
+            serial_len = 0;
+        }
+    }
+}
+
 static bool mqtt_connect() {
-    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    if (!mqtt_host[0]) {
+        Serial.println("MQTT skipped: no host (USB init)");
+        return false;
+    }
+    mqtt.setServer(mqtt_host, MQTT_BROKER_PORT);
     mqtt.setCallback(mqtt_callback);
     mqtt.setBufferSize(MACRO_START_MAX);
     mqtt.setKeepAlive(MQTT_KEEPALIVE_S);
@@ -676,9 +780,13 @@ static void wifi_mqtt_loop() {
         const uint32_t now = millis();
         if (now - last_wifi_attempt >= WIFI_RECONNECT_MS) {
             last_wifi_attempt = now;
+            if (!wifi_ssid[0]) {
+                Serial.println("Wi-Fi čeká na USB KCFG");
+                return;
+            }
             Serial.println("Wi-Fi reconnect");
             WiFi.disconnect();
-            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+            WiFi.begin(wifi_ssid, wifi_pass);
         }
         return;
     }
@@ -688,6 +796,9 @@ static void wifi_mqtt_loop() {
     }
 
     if (!mqtt.connected()) {
+        if (!mqtt_host[0]) {
+            return;
+        }
         const uint32_t now = millis();
         if (now - last_mqtt_attempt >= MQTT_RECONNECT_MS) {
             last_mqtt_attempt = now;
@@ -719,6 +830,11 @@ void setup() {
     Serial.println();
     Serial.print("klikac firmware ");
     Serial.println(FIRMWARE_VERSION);
+    cfg_load();
+    Serial.print("KLOG wifi=");
+    Serial.println(wifi_ssid[0] ? wifi_ssid : "(empty)");
+    Serial.print("KLOG mqtt=");
+    Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
 
     USB.onEvent(usb_event);
     USB.VID(USB_DEVICE_VID);
@@ -741,10 +857,14 @@ void setup() {
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setAutoReconnect(true);
     WiFi.persistent(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     last_wifi_attempt = millis();
-    Serial.print("Wi-Fi connecting to ");
-    Serial.println(WIFI_SSID);
+    if (wifi_ssid[0]) {
+        WiFi.begin(wifi_ssid, wifi_pass);
+        Serial.print("Wi-Fi connecting to ");
+        Serial.println(wifi_ssid);
+    } else {
+        Serial.println("Wi-Fi čeká na USB inicializaci (KCFG)");
+    }
 }
 
 void loop() {
@@ -760,6 +880,7 @@ void loop() {
         mouse_release_all();
     }
 
+    serial_poll();
     wifi_mqtt_loop();
 
     if (http_ota_req) {

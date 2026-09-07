@@ -1,7 +1,6 @@
 const { app } = require("electron");
 const fs = require("fs");
 const http = require("http");
-const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { pipeline } = require("stream/promises");
@@ -10,24 +9,16 @@ const { fetchLatestRelease, downloadFile, cmpVersion } = require("./githubReleas
 const { pushFirmware } = require("./espota");
 const { listSerialPorts, pickFlashPort } = require("./serialPorts");
 const { otaTopic } = require("./releaseMeta");
-
-function lanIPv4() {
-  const nics = os.networkInterfaces();
-  for (const rows of Object.values(nics)) {
-    for (const row of rows || []) {
-      if (row.family === "IPv4" && !row.internal) {
-        return row.address;
-      }
-    }
-  }
-  return "";
-}
+const { lanIPv4 } = require("./lan");
+const { provisionSerial } = require("./serialProvision");
+const { OTA_PASSWORD } = require("./mqttCreds");
 
 class FirmwareService {
-  constructor({ mqtt, otaPassword, onChange }) {
+  constructor({ mqtt, otaPassword, onChange, onLog }) {
     this.mqtt = mqtt;
-    this.otaPassword = otaPassword || "";
+    this.otaPassword = otaPassword || OTA_PASSWORD;
     this.onChange = onChange;
+    this.onLog = onLog;
     this.busy = false;
     this.state = {
       current: "",
@@ -56,6 +47,9 @@ class FirmwareService {
 
   setLog(msg) {
     this.state.log = msg;
+    if (typeof this.onLog === "function") {
+      this.onLog("usb", msg);
+    }
     this.emit();
   }
 
@@ -126,58 +120,103 @@ class FirmwareService {
     }
   }
 
-  async flash() {
+  async resolveImages() {
+    let latest;
+    try {
+      latest = (await this.check()).latest;
+    } catch (err) {
+      latest = null;
+      this.setLog(`GitHub: ${err.message}. Zkusím lokální soubor.`);
+    }
+    const firmwareBin = latest
+      ? await this.ensureAsset(latest.firmwareBinUrl, "firmware.bin")
+      : this.bundledFile("firmware.bin");
+    if (!firmwareBin) {
+      throw new Error("firmware.bin není k dispozici. Nejdřív vydaj release, nebo zkompiluj PlatformIO.");
+    }
+    const factoryBin = latest && latest.factoryUrl
+      ? await this.ensureAsset(latest.factoryUrl, "firmware-factory.bin")
+      : (this.bundledFile("firmware-factory.bin") || "");
+    const elf = latest && latest.firmwareElfUrl
+      ? await this.ensureAsset(latest.firmwareElfUrl, "firmware.elf")
+      : this.bundledFile("firmware.elf");
+    return { firmwareBin, factoryBin, elf };
+  }
+
+  async flash(opts = {}) {
+    if (this.busy) {
+      throw new Error("Nahrávání už běží");
+    }
+    const wifiSsid = String(opts.wifiSsid || "").trim();
+    const wifiPassword = String(opts.wifiPassword || "");
+    const mqttHost = String(opts.mqttHost || lanIPv4()).trim();
+    this.busy = true;
+    this.state.error = "";
+    this.state.progress = 0;
+    this.state.method = "usb";
+    this.state.status = "preparing";
+    this.setLog("Připravuji USB inicializaci…");
+    try {
+      if (!wifiSsid) {
+        throw new Error("Vyplň Wi-Fi SSID před USB inicializací.");
+      }
+      if (!mqttHost) {
+        throw new Error("Neznám IP tohoto PC. Připoj PC1 na LAN.");
+      }
+      const { firmwareBin, factoryBin, elf } = await this.resolveImages();
+      const usbImage = elf || factoryBin || firmwareBin;
+      const ports = await listSerialPorts();
+      this.state.ports = ports;
+      const port = pickFlashPort(ports);
+      if (!port) {
+        throw new Error("Flash kabel (CH343/COM) na tomhle PC není. USB init dělej na PC1 s programovacím USB.");
+      }
+      this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
+      await this.flashUsb({
+        port: port.path,
+        image: usbImage,
+      });
+      this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
+      this.state.status = "uploading";
+      await new Promise((r) => setTimeout(r, 3500));
+      await provisionSerial({
+        port: port.path,
+        wifiSsid,
+        wifiPassword,
+        mqttHost,
+        onLine: (line) => this.setLog(line),
+      });
+      this.state.status = "ok";
+      this.state.progress = 1;
+      this.setLog(`Hotovo. MQTT broker ${mqttHost}:1883. Přepoj destičku USB do PC2.`);
+      return this.snapshot();
+    } catch (err) {
+      this.state.error = err.message;
+      this.state.status = "error";
+      this.setLog(err.message);
+      throw err;
+    } finally {
+      this.busy = false;
+      this.emit();
+    }
+  }
+
+  async ota() {
     if (this.busy) {
       throw new Error("Nahrávání už běží");
     }
     this.busy = true;
     this.state.error = "";
     this.state.progress = 0;
-    this.state.method = "";
+    this.state.method = "wifi";
     this.state.status = "preparing";
-    this.setLog("Připravuji firmware…");
+    this.setLog("Připravuji firmware přes Wi-Fi…");
     try {
-      let latest;
-      try {
-        latest = (await this.check()).latest;
-      } catch (err) {
-        latest = null;
-        this.setLog(`GitHub: ${err.message}. Zkusím lokální soubor.`);
-      }
-      const firmwareBin = latest
-        ? await this.ensureAsset(latest.firmwareBinUrl, "firmware.bin")
-        : this.bundledFile("firmware.bin");
-      if (!firmwareBin) {
-        throw new Error("firmware.bin není k dispozici. Nejdřív vydaj release, nebo zkompiluj PlatformIO.");
-      }
-      const factoryBin = latest && latest.factoryUrl
-        ? await this.ensureAsset(latest.factoryUrl, "firmware-factory.bin")
-        : (this.bundledFile("firmware-factory.bin") || "");
-      const elf = latest && latest.firmwareElfUrl
-        ? await this.ensureAsset(latest.firmwareElfUrl, "firmware.elf")
-        : this.bundledFile("firmware.elf");
-      const usbImage = elf || factoryBin || firmwareBin;
-      const ports = await listSerialPorts();
-      this.state.ports = ports;
-      const port = pickFlashPort(ports);
-      if (port) {
-        this.state.method = "usb";
-        this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
-        await this.flashUsb({
-          port: port.path,
-          image: usbImage,
-        });
-        this.state.status = "ok";
-        this.state.progress = 1;
-        this.setLog("Firmware nahraný přes USB. Přepoj destičku do USB portu na PC2.");
-        return this.snapshot();
-      }
-
       const ip = this.mqtt.snapshot().ip;
       if (!ip) {
-        throw new Error("Nenašel jsem USB (COM) ani IP destičky. Zapoj flash kabel do PC1, nebo nech destičku online na Wi-Fi.");
+        throw new Error("Destička není online. Nech ji na Wi-Fi u PC2, Klikač na PC1.");
       }
-      this.state.method = "wifi";
+      const { firmwareBin } = await this.resolveImages();
       this.setLog(`Wi-Fi OTA na ${ip}…`);
       try {
         await pushFirmware({
@@ -195,11 +234,11 @@ class FirmwareService {
         this.setLog("Firmware nahraný přes Wi-Fi (ArduinoOTA). Destička se restartuje.");
         return this.snapshot();
       } catch (otaErr) {
-        this.setLog(`ArduinoOTA selhalo (${otaErr.message}). Zkouším stažení firmware destičkou…`);
+        this.setLog(`ArduinoOTA selhalo (${otaErr.message}). Destička si ho stáhne z Klikače…`);
         await this.flashHttp(firmwareBin);
         this.state.status = "ok";
         this.state.progress = 1;
-        this.setLog("Destička si firmware stahuje. Po restartu zkontroluj verzi.");
+        this.setLog("Odkaz na firmware odeslán. Po restartu destičky zkontroluj verzi.");
         return this.snapshot();
       }
     } catch (err) {

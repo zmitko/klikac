@@ -11,6 +11,10 @@
 #define USB_DEVICE_POWER_MA 100
 
 #define MQTT_CLIENT_ID_PREFIX "esp32kbd-"
+#define MQTT_BROKER_PORT 1883
+#define MQTT_USER "klikac"
+#define MQTT_PASSWORD "klikac"
+#define OTA_PASSWORD "klikac-ota"
 #define MQTT_TOPIC_COMMAND "esp32kbd/command"
 #define MQTT_TOPIC_MACRO "esp32kbd/macro"
 #define MQTT_TOPIC_STATUS "esp32kbd/status"

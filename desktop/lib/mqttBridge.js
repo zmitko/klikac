@@ -1,4 +1,5 @@
 const mqtt = require("mqtt");
+const { MQTT_PORT, MQTT_USER, MQTT_PASSWORD } = require("./mqttCreds");
 
 const TOPIC_COMMAND = "esp32kbd/command";
 const TOPIC_MACRO = "esp32kbd/macro";
@@ -11,9 +12,10 @@ const TOPIC_OTA_STATUS = "esp32kbd/ota_status";
 const LIVE_MS = 25000;
 
 class MqttBridge {
-  constructor(opts, onChange) {
+  constructor(opts, onChange, onLog) {
     this.opts = opts;
     this.onChange = onChange;
+    this.onLog = onLog;
     this.client = null;
     this.device = {
       mqtt: "disconnected",
@@ -29,10 +31,12 @@ class MqttBridge {
   }
 
   start() {
-    const url = `mqtt://${this.opts.host}:${this.opts.port}`;
+    const host = this.opts.host || "127.0.0.1";
+    const port = this.opts.port || MQTT_PORT;
+    const url = `mqtt://${host}:${port}`;
     this.client = mqtt.connect(url, {
-      username: this.opts.user || undefined,
-      password: this.opts.password || undefined,
+      username: this.opts.user || MQTT_USER,
+      password: this.opts.password || MQTT_PASSWORD,
       clientId: `klikac-win-${Math.random().toString(16).slice(2, 8)}`,
       keepalive: 20,
       reconnectPeriod: 2000,
@@ -42,6 +46,7 @@ class MqttBridge {
 
     this.client.on("connect", () => {
       this.device.mqtt = "connected";
+      this.log("app připojená na lokální broker");
       this.client.subscribe([TOPIC_STATUS, TOPIC_USB, TOPIC_ACK, TOPIC_IP, TOPIC_FW, TOPIC_OTA_STATUS], { qos: 0 });
       this.emit();
     });
@@ -57,8 +62,9 @@ class MqttBridge {
       this.device.mqtt = "disconnected";
       this.emit();
     });
-    this.client.on("error", () => {
+    this.client.on("error", (err) => {
       this.device.mqtt = "error";
+      this.log(`chyba ${err.message}`);
       this.emit();
     });
     this.client.on("message", (topic, payload) => {
@@ -88,6 +94,12 @@ class MqttBridge {
       this.emit();
     });
     setInterval(() => this.emit(), 4000);
+  }
+
+  log(msg) {
+    if (typeof this.onLog === "function") {
+      this.onLog("app", msg);
+    }
   }
 
   touchLive() {
@@ -129,7 +141,8 @@ class MqttBridge {
       err.code = "MQTT_OFF";
       throw err;
     }
-    this.client.publish(topic, String(payload), { qos: 0, retain: false });
+    const text = String(payload);
+    this.client.publish(topic, text, { qos: 0, retain: false });
   }
 }
 

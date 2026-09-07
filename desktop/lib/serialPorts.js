@@ -52,17 +52,31 @@ function pickFlashPort(ports) {
   const ranked = [...ports].sort((a, b) => {
     const score = (p) => {
       const hay = `${p.name} ${p.hint} ${p.path}`.toUpperCase();
+      if (/ACPI|PNP0501/.test(hay)) {
+        return 99;
+      }
       if (hay.includes("CH343") || hay.includes("CH340") || hay.includes("CH910")) {
         return 0;
       }
-      if (hay.includes("CP210") || hay.includes("SILICON") || hay.includes("USB-SERIAL")) {
+      if (hay.includes("CP210") || hay.includes("SILICON") || hay.includes("USB-SERIAL") || hay.includes("USB SERIAL")) {
         return 1;
       }
-      return 5;
+      return 99;
     };
     return score(a) - score(b);
   });
-  return ranked[0] || null;
+  const best = ranked[0];
+  if (!best) {
+    return null;
+  }
+  const hay = `${best.name} ${best.hint} ${best.path}`.toUpperCase();
+  if (/ACPI|PNP0501/.test(hay) || !(
+    hay.includes("CH343") || hay.includes("CH340") || hay.includes("CH910")
+    || hay.includes("CP210") || hay.includes("SILICON") || hay.includes("USB-SERIAL") || hay.includes("USB SERIAL")
+  )) {
+    return null;
+  }
+  return best;
 }
 
 module.exports = { listSerialPorts, pickFlashPort };

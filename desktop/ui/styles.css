@@ -15,6 +15,11 @@
 
 * { box-sizing: border-box; }
 
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -23,8 +28,13 @@ body {
 
 .page {
   max-width: 1100px;
+  height: 100%;
   margin: 0 auto;
-  padding: 10px 12px 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 h1 {
@@ -76,9 +86,11 @@ h2 {
   grid-template-columns: 1.15fr 1.25fr 0.9fr;
   gap: 8px;
   align-items: stretch;
+  flex: 0 0 auto;
 }
 
 .col-left,
+.col-mid,
 .col-right {
   display: flex;
   flex-direction: column;
@@ -90,7 +102,6 @@ h2 {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: 1;
 }
 
 .col-left .col-card {
@@ -98,16 +109,24 @@ h2 {
   overflow: visible;
 }
 
-.slots {
+.col-mid .col-card {
   flex: 1;
+}
+
+.slots {
   display: flex;
   flex-direction: column;
 }
 
-.device-card,
+.device-card {
+  flex: 1;
+}
+
 .mouse-card,
 .update-card {
-  flex: 1;
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 8px 14px;
 }
 
 .fw-btn {
@@ -129,6 +148,52 @@ h2 {
   pointer-events: none;
 }
 
+.wifi-fold {
+  margin-top: 4px;
+}
+
+.wifi-fold-btn {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 2px;
+  cursor: pointer;
+}
+
+.wifi-fold-btn::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.wifi-fold.open .wifi-fold-btn::before {
+  transform: rotate(90deg);
+}
+
+.wifi-fold-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.wifi-fold.open .wifi-fold-body {
+  grid-template-rows: 1fr;
+}
+
+.wifi-fold-inner {
+  overflow: hidden;
+}
+
+.fw-btn.secondary {
+  margin-top: 6px;
+  background: #eceff1;
+  color: #1565c0;
+}
+.fw-btn.secondary:hover { background: #e3f2fd; }
+
 .fw-btn.compact {
   margin-top: 0;
   width: auto;
@@ -140,6 +205,30 @@ h2 {
 #fw-log {
   margin-top: 6px;
   min-height: 1.2em;
+}
+
+.log-card {
+  margin-top: 8px;
+  flex: 0 0 auto;
+  padding: 8px 14px;
+}
+
+.log-card h2 {
+  margin-bottom: 4px;
+}
+
+.proto-log {
+  margin: 0;
+  max-height: 72px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #37474f;
+  background: #f4f6f8;
+  border-radius: 8px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .pad-btn {
@@ -205,7 +294,8 @@ body.disabled .pad-btn {
   color: var(--muted);
 }
 
-.field input[type="text"] {
+.field input[type="text"],
+.field input[type="password"] {
   border: 0;
   border-bottom: 1px solid var(--line);
   padding: 6px 2px;
@@ -215,7 +305,8 @@ body.disabled .pad-btn {
   outline: none;
 }
 
-.field input[type="text"]:focus { border-bottom-color: var(--accent); }
+.field input[type="text"]:focus,
+.field input[type="password"]:focus { border-bottom-color: var(--accent); }
 .field.range {
   margin-bottom: 12px;
   min-height: 48px;
@@ -325,11 +416,10 @@ body.disabled .run-btn {
 .slot {
   display: grid;
   grid-template-columns: 26px 1fr;
-  gap: 4px 10px;
+  gap: 2px 10px;
   align-items: center;
-  padding: 6px 0;
+  padding: 3px 0;
   border-bottom: 1px solid var(--line);
-  flex: 1;
 }
 
 .slot:last-child { border-bottom: 0; }

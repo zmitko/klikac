@@ -4,6 +4,10 @@ const path = require("path");
 const { AppCore } = require("./lib/appCore");
 const { AppUpdater } = require("./lib/appUpdater");
 const { FirmwareService } = require("./lib/firmwareService");
+const { MqttBroker } = require("./lib/mqttBroker");
+const { AppLog } = require("./lib/appLog");
+const { MQTT_PORT, MQTT_USER, MQTT_PASSWORD, OTA_PASSWORD } = require("./lib/mqttCreds");
+const { lanIPv4 } = require("./lib/lan");
 
 let mainWindow = null;
 let tray = null;
@@ -11,6 +15,8 @@ let quitting = false;
 let core = null;
 let updater = null;
 let firmware = null;
+let broker = null;
+let appLog = null;
 
 function iconPath(name) {
   const ico = path.join(__dirname, "assets", "icon.ico");
@@ -39,13 +45,13 @@ function loadConfig() {
     fs.writeFileSync(userFile, JSON.stringify(merged, null, 2), "utf8");
   }
   return {
-    mqttHost: merged.mqttHost || "127.0.0.1",
-    mqttPort: Number.parseInt(merged.mqttPort || 1883, 10),
-    mqttUser: merged.mqttUser || "",
-    mqttPassword: merged.mqttPassword || "",
+    mqttHost: "127.0.0.1",
+    mqttPort: MQTT_PORT,
+    mqttUser: MQTT_USER,
+    mqttPassword: MQTT_PASSWORD,
     targetPcHost: merged.targetPcHost || "",
     targetPcName: merged.targetPcName || "PC",
-    otaPassword: merged.otaPassword || "",
+    otaPassword: OTA_PASSWORD,
   };
 }
 
@@ -68,7 +74,7 @@ function createWindow() {
   const icon = nativeImage.createFromPath(iconPath("ico"));
   mainWindow = new BrowserWindow({
     width: 1100,
-    height: 720,
+    height: 700,
     minWidth: 920,
     minHeight: 620,
     title: "Klikač",
@@ -126,46 +132,43 @@ function createTray() {
   tray.on("click", () => showMainWindow());
 }
 
+function attachSnap(snap) {
+  snap.update = updater ? updater.snapshot() : null;
+  snap.firmware = firmware ? firmware.snapshot() : null;
+  snap.net = broker ? broker.snapshot() : { lanIp: lanIPv4(), port: MQTT_PORT };
+  snap.log = appLog ? appLog.snapshot() : [];
+  return snap;
+}
+
 function sendState() {
   if (!core || !mainWindow || mainWindow.isDestroyed()) {
     return;
   }
-  const snap = core.snapshot();
-  snap.update = updater ? updater.snapshot() : null;
-  snap.firmware = firmware ? firmware.snapshot() : null;
-  mainWindow.webContents.send("state", snap);
+  mainWindow.webContents.send("state", attachSnap(core.snapshot()));
 }
 
 function bindIpc() {
-  ipcMain.handle("get-state", () => {
-    const snap = core.snapshot();
-    snap.update = updater ? updater.snapshot() : null;
-    snap.firmware = firmware ? firmware.snapshot() : null;
-    return snap;
-  });
-  ipcMain.handle("set-state", (_event, patch) => {
-    const snap = core.applyState(patch);
-    snap.update = updater ? updater.snapshot() : null;
-    snap.firmware = firmware ? firmware.snapshot() : null;
-    return snap;
-  });
+  ipcMain.handle("get-state", () => attachSnap(core.snapshot()));
+  ipcMain.handle("set-state", (_event, patch) => attachSnap(core.applyState(patch)));
   ipcMain.handle("command", (_event, payload) => {
     core.sendCommand(payload);
-    const snap = core.snapshot();
-    snap.update = updater ? updater.snapshot() : null;
-    snap.firmware = firmware ? firmware.snapshot() : null;
-    return snap;
+    return attachSnap(core.snapshot());
   });
   ipcMain.handle("mouse-click", (_event, button) => {
     core.mouseClick(button);
-    const snap = core.snapshot();
-    snap.update = updater ? updater.snapshot() : null;
-    snap.firmware = firmware ? firmware.snapshot() : null;
-    return snap;
+    return attachSnap(core.snapshot());
   });
   ipcMain.handle("check-update", async () => updater.check());
   ipcMain.handle("install-update", async () => updater.install());
-  ipcMain.handle("flash-firmware", async () => firmware.flash());
+  ipcMain.handle("flash-firmware", async () => {
+    const ui = core.store.get();
+    return firmware.flash({
+      wifiSsid: ui.wifiSsid,
+      wifiPassword: ui.wifiPassword,
+      mqttHost: lanIPv4(),
+    });
+  });
+  ipcMain.handle("ota-firmware", async () => firmware.ota());
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -175,8 +178,15 @@ if (!gotLock) {
   app.on("second-instance", () => showMainWindow());
   app.setName("Klikač");
   app.setAppUserModelId("cz.klikac.esp32");
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     const cfg = loadConfig();
+    appLog = new AppLog({ onChange: () => sendState() });
+    broker = new MqttBroker({ onLog: (src, msg) => appLog.push(src, msg) });
+    try {
+      await broker.start();
+    } catch (err) {
+      appLog.push("mqtt", `broker start fail: ${err.message}`);
+    }
     core = new AppCore({
       statePath: path.join(app.getPath("userData"), "state.json"),
       mqtt: {
@@ -190,12 +200,14 @@ if (!gotLock) {
         name: cfg.targetPcName,
       },
       onChange: () => sendState(),
+      onLog: (src, msg) => appLog.push(src, msg),
     });
     updater = new AppUpdater({ onChange: () => sendState() });
     firmware = new FirmwareService({
       mqtt: core.mqtt,
       otaPassword: cfg.otaPassword,
       onChange: () => sendState(),
+      onLog: (src, msg) => appLog.push(src, msg),
     });
     core.start();
     updater.start();
@@ -214,5 +226,8 @@ app.on("before-quit", () => {
   quitting = true;
   if (core) {
     core.shutdown();
+  }
+  if (broker) {
+    broker.stop().catch(() => {});
   }
 });
