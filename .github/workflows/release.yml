@@ -98,12 +98,14 @@ jobs:
     needs: [version, firmware, desktop]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.version.outputs.tag }}
           VER: ${{ needs.version.outputs.version }}
         run: |
@@ -114,6 +116,7 @@ jobs:
             gh release upload "$TAG" * --clobber
           else
             gh release create "$TAG" * \
+              --repo "$GH_REPO" \
               --title "Klikač ${VER}" \
               --notes "Klikač ${VER} — Windows instalátor a firmware destičky (${VER}). USB flash z aplikace (kabel do PC1), další nahrání může jít přes Wi-Fi."
           fi
