@@ -1,0 +1,2 @@
+# Not used. Delete "ESP32 macro stop" in Home Assistant if it still exists.
+# Macro stops when input_boolean.esp32_macro_run or the Controller goes off.

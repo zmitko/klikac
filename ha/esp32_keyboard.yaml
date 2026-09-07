@@ -1,0 +1,6 @@
+# Do NOT paste this whole file into the HA UI automation editor.
+# The UI accepts one automation (a mapping), not a YAML list.
+# Use:
+#   ha/automation_master.yaml
+#   ha/automation_fkeys.yaml
+# Paste each file separately: Settings → Automations → Create → ⋮ → Edit in YAML

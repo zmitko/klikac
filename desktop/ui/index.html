@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Klikač</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <section class="fkey-row" id="fkeys"></section>
+
+    <section class="grid-3">
+      <div class="col-left">
+        <article class="card col-card">
+          <h2>Chování</h2>
+          <label class="field">
+            <span>Aktivní Makra</span>
+            <input type="text" id="macro-active" maxlength="16" placeholder="1,2,3">
+          </label>
+          <div class="row-toggle">
+            <span>Smyčka dokola</span>
+            <label class="switch">
+              <input type="checkbox" id="macro-loop">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <label class="field range">
+            <span>D min <b id="dmin-val">200</b></span>
+            <input type="range" id="delay-min" min="50" max="5000" step="1">
+          </label>
+          <label class="field range">
+            <span>D max <b id="dmax-val">800</b></span>
+            <input type="range" id="delay-max" min="50" max="5000" step="1">
+          </label>
+          <button type="button" class="run-btn" id="macro-run" aria-pressed="false">
+            <span class="run-dot"></span>
+            <span class="run-label">Spustit makro</span>
+          </button>
+        </article>
+
+        <article class="card mouse-card">
+          <div class="row-toggle">
+            <div>
+              <div class="subhead">Přenos myši PC1 → PC2</div>
+              <div class="muted tiny" id="mouse-meta">vypnuto</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="mouse-bridge">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </article>
+      </div>
+
+      <article class="card col-card">
+        <h2>Sekvence</h2>
+        <div id="slots" class="slots"></div>
+      </article>
+
+      <div class="col-right">
+        <div class="btn-row">
+          <button type="button" class="pad-btn" data-cmd="LC">
+            <span class="ico mouse"></span>
+            <span>LMB</span>
+          </button>
+          <button type="button" class="pad-btn" data-cmd="RC">
+            <span class="ico mouse"></span>
+            <span>RMB</span>
+          </button>
+        </div>
+        <button type="button" class="pad-btn wide" data-cmd="ENTER">
+          <span class="ico key"></span>
+          <span>ENTER</span>
+        </button>
+
+        <article class="card device-card">
+          <h2>Destička</h2>
+          <div class="status-line">
+            <span class="dot" id="esp-dot"></span>
+            <div>
+              <div class="device-name" id="esp-status">MQTT: čekám…</div>
+              <div class="mono" id="esp-ip">—</div>
+              <div class="muted" id="esp-meta"></div>
+              <div class="muted tiny" id="fw-meta">firmware —</div>
+            </div>
+          </div>
+          <button type="button" class="fw-btn" id="flash-fw">Nahrát firmware</button>
+          <div class="muted tiny" id="fw-log"></div>
+        </article>
+
+        <article class="card update-card">
+          <div class="row-toggle">
+            <div>
+              <div class="subhead">Klikač <span id="app-ver"></span></div>
+              <div class="muted tiny" id="upd-meta">kontrola verze…</div>
+            </div>
+            <button type="button" class="fw-btn compact" id="app-update" hidden>Aktualizovat</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" hidden></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

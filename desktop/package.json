@@ -1,0 +1,69 @@
+{
+  "name": "ovladac",
+  "productName": "Klikač",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Klikač – Windows tray ovladač ESP32 HID, stejný MQTT protokol jako Home Assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "mqtt": "^5.10.4"
+  },
+  "devDependencies": {
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "cz.klikac.esp32",
+    "productName": "Klikač",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "ui/**",
+      "assets/**",
+      "tools/**",
+      "config.example.json"
+    ],
+    "extraResources": [
+      {
+        "from": "firmware",
+        "to": "firmware",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "artifactName": "Klikac-Setup-${version}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "zmitko",
+      "repo": "klikac"
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Klikač",
+      "uninstallDisplayName": "Klikač"
+    }
+  }
+}

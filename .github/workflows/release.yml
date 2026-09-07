@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag (např. v1.0.0). Prázdné = v + VERSION."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: |
+          VER="$(tr -d ' \n\r' < VERSION)"
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="v${VER}"; fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Klikač ${VER} / ${TAG}"
+
+  firmware:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Write secrets.h
+        env:
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD }}
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}
+          MQTT_PORT: ${{ secrets.MQTT_PORT }}
+          MQTT_USER: ${{ secrets.MQTT_USER }}
+          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
+          OTA_PASSWORD: ${{ secrets.OTA_PASSWORD }}
+        run: python scripts/write_secrets.py
+      - name: Sync version
+        run: python scripts/sync_version.py
+      - name: Install PlatformIO
+        run: pip install -U platformio esptool
+      - name: Build firmware
+        run: pio run -e esp32-s3-n16r8
+      - name: Merge factory image
+        run: python scripts/merge_firmware.py dist-firmware
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: dist-firmware/*
+
+  desktop:
+    needs: [version, firmware]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: desktop/firmware
+      - name: Download espflash
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop/tools | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP "espflash.zip"
+          Invoke-WebRequest -Uri "https://github.com/esp-rs/espflash/releases/download/v4.5.0/espflash-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP/espflash" -Force
+          Copy-Item "$env:RUNNER_TEMP/espflash/espflash.exe" "desktop/tools/espflash.exe"
+          Copy-Item "desktop/tools/espflash.exe" "desktop/firmware/espflash.exe"
+      - name: npm ci
+        working-directory: desktop
+        run: npm ci
+      - name: Build installer
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.yml
+            desktop/dist/*.blockmap
+            desktop/tools/espflash.exe
+
+  publish:
+    needs: [version, firmware, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p out
+          find artifacts -type f -exec cp {} out/ \;
+          cd out
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" * --clobber
+          else
+            gh release create "$TAG" * \
+              --title "Klikač ${VER}" \
+              --notes "Klikač ${VER} — Windows instalátor a firmware destičky (${VER}). USB flash z aplikace (kabel do PC1), další nahrání může jít přes Wi-Fi."
+          fi

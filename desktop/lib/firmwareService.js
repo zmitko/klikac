@@ -1,0 +1,329 @@
+const { app } = require("electron");
+const fs = require("fs");
+const http = require("http");
+const os = require("os");
+const path = require("path");
+const { spawn } = require("child_process");
+const { pipeline } = require("stream/promises");
+const { createReadStream } = require("fs");
+const { fetchLatestRelease, downloadFile, cmpVersion } = require("./githubRelease");
+const { pushFirmware } = require("./espota");
+const { listSerialPorts, pickFlashPort } = require("./serialPorts");
+const { otaTopic } = require("./releaseMeta");
+
+function lanIPv4() {
+  const nics = os.networkInterfaces();
+  for (const rows of Object.values(nics)) {
+    for (const row of rows || []) {
+      if (row.family === "IPv4" && !row.internal) {
+        return row.address;
+      }
+    }
+  }
+  return "";
+}
+
+class FirmwareService {
+  constructor({ mqtt, otaPassword, onChange }) {
+    this.mqtt = mqtt;
+    this.otaPassword = otaPassword || "";
+    this.onChange = onChange;
+    this.busy = false;
+    this.state = {
+      current: "",
+      latest: "",
+      available: false,
+      method: "",
+      progress: 0,
+      status: "idle",
+      error: "",
+      log: "",
+      ports: [],
+    };
+  }
+
+  snapshot() {
+    const device = this.mqtt.snapshot();
+    this.state.current = device.fw || this.state.current;
+    return { ...this.state };
+  }
+
+  emit() {
+    if (typeof this.onChange === "function") {
+      this.onChange();
+    }
+  }
+
+  setLog(msg) {
+    this.state.log = msg;
+    this.emit();
+  }
+
+  cacheDir() {
+    const dir = path.join(app.getPath("userData"), "firmware");
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  bundledFile(name) {
+    const roots = [];
+    if (process.resourcesPath) {
+      roots.push(path.join(process.resourcesPath, "firmware"));
+      roots.push(path.join(process.resourcesPath, "tools"));
+    }
+    roots.push(path.join(__dirname, "..", "firmware"));
+    roots.push(path.join(__dirname, "..", "tools"));
+    roots.push(path.join(__dirname, "..", "..", ".pio", "build", "esp32-s3-n16r8"));
+    for (const root of roots) {
+      const full = path.join(root, name);
+      if (fs.existsSync(full)) {
+        return full;
+      }
+    }
+    return "";
+  }
+
+  async ensureAsset(url, fileName) {
+    const bundled = this.bundledFile(fileName);
+    if (bundled) {
+      return bundled;
+    }
+    if (!url) {
+      throw new Error(`Chybí ${fileName} v GitHub releasu`);
+    }
+    const dest = path.join(this.cacheDir(), fileName);
+    await downloadFile(url, dest, (p) => {
+      this.state.progress = p;
+      this.state.status = "downloading";
+      this.emit();
+    });
+    return dest;
+  }
+
+  async check() {
+    this.state.error = "";
+    try {
+      const latest = await fetchLatestRelease();
+      this.state.latest = latest.version;
+      const deviceFw = this.mqtt.snapshot().fw || "";
+      this.state.current = deviceFw;
+      this.state.available = !deviceFw || cmpVersion(latest.version, deviceFw) > 0;
+      this.state.status = this.state.available ? "available" : "ok";
+      this.emit();
+      return { latest, snapshot: this.snapshot() };
+    } catch (err) {
+      if (/404|Not Found/i.test(String(err.message))) {
+        this.state.available = false;
+        this.state.status = "ok";
+        this.state.error = "";
+        this.emit();
+        return { latest: null, snapshot: this.snapshot() };
+      }
+      this.state.error = err.message;
+      this.state.status = "error";
+      this.emit();
+      throw err;
+    }
+  }
+
+  async flash() {
+    if (this.busy) {
+      throw new Error("Nahrávání už běží");
+    }
+    this.busy = true;
+    this.state.error = "";
+    this.state.progress = 0;
+    this.state.method = "";
+    this.state.status = "preparing";
+    this.setLog("Připravuji firmware…");
+    try {
+      let latest;
+      try {
+        latest = (await this.check()).latest;
+      } catch (err) {
+        latest = null;
+        this.setLog(`GitHub: ${err.message}. Zkusím lokální soubor.`);
+      }
+      const firmwareBin = latest
+        ? await this.ensureAsset(latest.firmwareBinUrl, "firmware.bin")
+        : this.bundledFile("firmware.bin");
+      if (!firmwareBin) {
+        throw new Error("firmware.bin není k dispozici. Nejdřív vydaj release, nebo zkompiluj PlatformIO.");
+      }
+      const factoryBin = latest && latest.factoryUrl
+        ? await this.ensureAsset(latest.factoryUrl, "firmware-factory.bin")
+        : (this.bundledFile("firmware-factory.bin") || "");
+      const elf = latest && latest.firmwareElfUrl
+        ? await this.ensureAsset(latest.firmwareElfUrl, "firmware.elf")
+        : this.bundledFile("firmware.elf");
+      const usbImage = elf || factoryBin || firmwareBin;
+      const ports = await listSerialPorts();
+      this.state.ports = ports;
+      const port = pickFlashPort(ports);
+      if (port) {
+        this.state.method = "usb";
+        this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
+        await this.flashUsb({
+          port: port.path,
+          image: usbImage,
+        });
+        this.state.status = "ok";
+        this.state.progress = 1;
+        this.setLog("Firmware nahraný přes USB. Přepoj destičku do USB portu na PC2.");
+        return this.snapshot();
+      }
+
+      const ip = this.mqtt.snapshot().ip;
+      if (!ip) {
+        throw new Error("Nenašel jsem USB (COM) ani IP destičky. Zapoj flash kabel do PC1, nebo nech destičku online na Wi-Fi.");
+      }
+      this.state.method = "wifi";
+      this.setLog(`Wi-Fi OTA na ${ip}…`);
+      try {
+        await pushFirmware({
+          host: ip,
+          password: this.otaPassword,
+          filePath: firmwareBin,
+          onProgress: (p) => {
+            this.state.progress = p;
+            this.state.status = "uploading";
+            this.emit();
+          },
+        });
+        this.state.status = "ok";
+        this.state.progress = 1;
+        this.setLog("Firmware nahraný přes Wi-Fi (ArduinoOTA). Destička se restartuje.");
+        return this.snapshot();
+      } catch (otaErr) {
+        this.setLog(`ArduinoOTA selhalo (${otaErr.message}). Zkouším stažení firmware destičkou…`);
+        await this.flashHttp(firmwareBin);
+        this.state.status = "ok";
+        this.state.progress = 1;
+        this.setLog("Destička si firmware stahuje. Po restartu zkontroluj verzi.");
+        return this.snapshot();
+      }
+    } catch (err) {
+      this.state.error = err.message;
+      this.state.status = "error";
+      this.setLog(err.message);
+      throw err;
+    } finally {
+      this.busy = false;
+      this.emit();
+    }
+  }
+
+  async flashUsb({ port, image }) {
+    let espflash = this.bundledFile("espflash.exe") || path.join(this.cacheDir(), "espflash.exe");
+    if (!fs.existsSync(espflash)) {
+      this.setLog("Stahuji espflash…");
+      let url = "";
+      try {
+        const latest = await fetchLatestRelease();
+        url = latest.espflashUrl;
+      } catch {
+        url = "";
+      }
+      if (!url) {
+        url = "https://github.com/esp-rs/espflash/releases/download/v4.5.0/espflash-x86_64-pc-windows-msvc.zip";
+      }
+      if (url.endsWith(".zip")) {
+        const zip = path.join(this.cacheDir(), "espflash.zip");
+        await downloadFile(url, zip);
+        const { execFile } = require("child_process");
+        const { promisify } = require("util");
+        await promisify(execFile)("powershell.exe", [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -Path "${zip}" -DestinationPath "${this.cacheDir()}" -Force`,
+        ], { windowsHide: true });
+        const found = path.join(this.cacheDir(), "espflash.exe");
+        if (!fs.existsSync(found)) {
+          throw new Error("espflash.exe se z archivu nenašel");
+        }
+        espflash = found;
+      } else {
+        await downloadFile(url, espflash);
+      }
+    }
+    const ext = path.extname(image).toLowerCase();
+    const base = path.basename(image).toLowerCase();
+    let args;
+    if (ext === ".elf") {
+      args = ["flash", "--port", port, "--baud", "921600", "--flash-size", "16mb", image];
+    } else if (base.includes("factory")) {
+      args = ["write-bin", "--port", port, "--baud", "921600", "0x0", image];
+    } else {
+      args = ["write-bin", "--port", port, "--baud", "921600", "0x10000", image];
+    }
+    await this.runProcess(espflash, args);
+  }
+
+  runProcess(cmd, args) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(cmd, args, { windowsHide: true });
+      let err = "";
+      child.stdout.on("data", (chunk) => {
+        const line = String(chunk).trim();
+        if (line) {
+          this.setLog(line.slice(-180));
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        err += chunk;
+        const line = String(chunk).trim();
+        if (line) {
+          this.setLog(line.slice(-180));
+        }
+      });
+      child.on("error", reject);
+      child.on("exit", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(err.trim() || `espflash skončil kódem ${code}`));
+        }
+      });
+    });
+  }
+
+  async flashHttp(firmwareBin) {
+    if (!this.mqtt.isReady()) {
+      throw new Error("MQTT není připojený, destička si firmware nestáhne");
+    }
+    const ip = lanIPv4();
+    if (!ip) {
+      throw new Error("PC1 nemá LAN IP pro HTTP OTA");
+    }
+    const url = await this.serveFile(firmwareBin, ip);
+    this.mqtt.publish(otaTopic, url);
+    this.setLog(`Odesláno destičce: ${url}`);
+  }
+
+  serveFile(filePath, ip) {
+    return new Promise((resolve, reject) => {
+      const server = http.createServer(async (req, res) => {
+        if (req.url !== "/firmware.bin") {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Length", fs.statSync(filePath).size);
+        try {
+          await pipeline(createReadStream(filePath), res);
+        } catch {
+          /* client hangup */
+        }
+        setTimeout(() => server.close(), 2000);
+      });
+      server.on("error", reject);
+      server.listen(0, "0.0.0.0", () => {
+        const { port } = server.address();
+        resolve(`http://${ip}:${port}/firmware.bin`);
+      });
+    });
+  }
+}
+
+module.exports = { FirmwareService };

@@ -1,0 +1,48 @@
+alias: ESP32 macro run switch
+description: ON publishes selected slots (1,3,4) to esp32kbd/macro as parallel sequences. OFF or Controller off publishes STOP.
+trigger:
+  - platform: state
+    entity_id: input_boolean.esp32_macro_run
+    to: "on"
+    id: start
+  - platform: state
+    entity_id: input_boolean.esp32_macro_run
+    to: "off"
+    id: stop
+  - platform: state
+    entity_id: input_boolean.esp32_controller_enabled
+    to: "off"
+    id: stop
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          - service: mqtt.publish
+            data:
+              topic: esp32kbd/macro
+              retain: false
+              payload: >-
+                {% set raw = states('input_text.esp32_macro_active') | replace('"', '') | replace("'", '') | replace(' ', '') %}
+                {% set loop_f = 1 if is_state('input_boolean.esp32_macro_loop', 'on') else 0 %}
+                {% set dmin = states('input_number.esp32_delay_min') | int(200) %}
+                {% set dmax = states('input_number.esp32_delay_max') | int(800) %}
+                {% set ns = namespace(lines=[]) %}
+                {% for part in raw.split(',') %}
+                  {% set n = part | trim %}
+                  {% if n in ['1', '2', '3', '4', '5'] %}
+                    {% set seq = states('input_text.esp32_macro_' ~ n) | trim %}
+                    {% if seq %}
+                      {% set ns.lines = ns.lines + [loop_f | string ~ '|' ~ dmin ~ '|' ~ dmax ~ '|' ~ seq] %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.lines | join(';;') }}
+    default:
+      - service: mqtt.publish
+        data:
+          topic: esp32kbd/macro
+          retain: false
+          payload: STOP
+mode: queued

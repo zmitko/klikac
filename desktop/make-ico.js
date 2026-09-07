@@ -1,0 +1,21 @@
+const fs = require("fs");
+const path = require("path");
+
+const pngPath = path.join(__dirname, "assets", "icon.png");
+const icoPath = path.join(__dirname, "assets", "icon.ico");
+const png = fs.readFileSync(pngPath);
+const buf = Buffer.alloc(22 + png.length);
+buf.writeUInt16LE(0, 0);
+buf.writeUInt16LE(1, 2);
+buf.writeUInt16LE(1, 4);
+buf.writeUInt8(0, 6);
+buf.writeUInt8(0, 7);
+buf.writeUInt8(0, 8);
+buf.writeUInt8(0, 9);
+buf.writeUInt16LE(1, 10);
+buf.writeUInt16LE(32, 12);
+buf.writeUInt32LE(png.length, 14);
+buf.writeUInt32LE(22, 18);
+png.copy(buf, 22);
+fs.writeFileSync(icoPath, buf);
+console.log("wrote", icoPath, buf.length);

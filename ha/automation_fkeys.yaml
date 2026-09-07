@@ -1,0 +1,41 @@
+alias: ESP32 keyboard – F1 to F8 and ENTER
+description: Send a single HID keypress. Never retain the command.
+trigger:
+  - platform: state
+    entity_id: input_button.esp32_f1
+    id: F1
+  - platform: state
+    entity_id: input_button.esp32_f2
+    id: F2
+  - platform: state
+    entity_id: input_button.esp32_f3
+    id: F3
+  - platform: state
+    entity_id: input_button.esp32_f4
+    id: F4
+  - platform: state
+    entity_id: input_button.esp32_f5
+    id: F5
+  - platform: state
+    entity_id: input_button.esp32_f6
+    id: F6
+  - platform: state
+    entity_id: input_button.esp32_f7
+    id: F7
+  - platform: state
+    entity_id: input_button.esp32_f8
+    id: F8
+  - platform: state
+    entity_id: input_button.esp32_enter
+    id: ENTER
+condition:
+  - condition: state
+    entity_id: input_boolean.esp32_controller_enabled
+    state: "on"
+action:
+  - service: mqtt.publish
+    data:
+      topic: esp32kbd/command
+      retain: false
+      payload: "{{ trigger.id }}"
+mode: queued

@@ -1,0 +1,20 @@
+alias: ESP32 mouse – left and right
+description: Click at the current cursor. Payload is always LC or RC, never trigger.id.
+trigger:
+  - platform: state
+    entity_id: input_button.esp32_mouse_left
+    id: left
+  - platform: state
+    entity_id: input_button.esp32_mouse_right
+    id: right
+condition:
+  - condition: state
+    entity_id: input_boolean.esp32_controller_enabled
+    state: "on"
+action:
+  - service: mqtt.publish
+    data:
+      topic: esp32kbd/command
+      retain: false
+      payload: "{{ 'LC' if trigger.entity_id == 'input_button.esp32_mouse_left' else 'RC' }}"
+mode: queued
