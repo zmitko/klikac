@@ -1,7 +1,7 @@
 {
   "name": "ovladac",
   "productName": "Klikač",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "Klikač – Windows tray ovladač ESP32 HID s vestavěným MQTT brokerem",
   "main": "main.js",
@@ -64,7 +64,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Klikač",
-      "uninstallDisplayName": "Klikač"
+      "uninstallDisplayName": "Klikač",
+      "include": "installer.nsh"
     }
   }
 }

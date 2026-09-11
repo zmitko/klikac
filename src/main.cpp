@@ -14,6 +14,8 @@
 #include <PubSubClient.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include "USB.h"
 #include "USBHIDKeyboard.h"
 #include "USBHIDMouse.h"
@@ -58,8 +60,11 @@ static uint32_t last_wifi_attempt = 0;
 static uint32_t last_heartbeat = 0;
 static uint32_t wifi_begin_at = 0;
 static uint32_t wifi_start_at = 0;
+static volatile uint32_t wifi_armed_at = 0;
+static uint32_t last_hid_keep = 0;
 static uint32_t mqtt_reannounce_at = 0;
 static volatile bool usb_announce = false;
+static volatile bool hid_holding = false;
 
 static int last_button = HIGH;
 static uint32_t last_button_ms = 0;
@@ -86,14 +91,18 @@ static void usb_event(void *arg, esp_event_base_t base, int32_t id, void *data) 
         case ARDUINO_USB_RESUME_EVENT:
             usb_mounted = true;
             usb_announce = true;
+            if (!wifi_armed_at) {
+                wifi_armed_at = millis() + WIFI_AFTER_USB_MS;
+            }
             break;
         case ARDUINO_USB_STOPPED_EVENT:
-        case ARDUINO_USB_SUSPEND_EVENT:
             usb_mounted = false;
             usb_needs_release = true;
             pending_fn = 0;
             pending_mouse = 0;
             pending_enter = false;
+            break;
+        case ARDUINO_USB_SUSPEND_EVENT:
             break;
         default:
             break;
@@ -120,6 +129,7 @@ static void human_key(uint8_t hid_key) {
         return;
     }
     const uint32_t hold_ms = human_hold_ms();
+    hid_holding = true;
     Keyboard.press(hid_key);
     const uint32_t start = millis();
     while ((millis() - start) < hold_ms) {
@@ -130,6 +140,7 @@ static void human_key(uint8_t hid_key) {
     }
     Keyboard.release(hid_key);
     Keyboard.releaseAll();
+    hid_holding = false;
     Serial.print(" hold=");
     Serial.print(hold_ms);
     Serial.println("ms");
@@ -157,6 +168,7 @@ static void human_click(uint8_t button) {
         return;
     }
     const uint32_t hold_ms = human_hold_ms();
+    hid_holding = true;
     Mouse.press(button);
     const uint32_t start = millis();
     while ((millis() - start) < hold_ms) {
@@ -166,6 +178,7 @@ static void human_click(uint8_t button) {
         idle_poll();
     }
     Mouse.release(button);
+    hid_holding = false;
     Serial.print(" hold=");
     Serial.print(hold_ms);
     Serial.println("ms");
@@ -797,7 +810,7 @@ static void wifi_begin_now(const char *why) {
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
-    WiFi.setTxPower(WIFI_POWER_17dBm);
+    WiFi.setTxPower(WIFI_POWER_11dBm);
     if (wifi_begin_at) {
         WiFi.disconnect(false, false);
         delay(50);
@@ -825,8 +838,11 @@ static void wifi_mqtt_loop() {
             return;
         }
         if (!wifi_begin_at) {
-            if (usb_mounted || !wifi_start_at || now >= wifi_start_at) {
-                wifi_begin_now("start");
+            const uint32_t armed = wifi_armed_at;
+            const bool after_usb = armed && now >= armed;
+            const bool fallback = !wifi_start_at || now >= wifi_start_at;
+            if (after_usb || fallback) {
+                wifi_begin_now(after_usb ? "after-usb" : "start");
             }
             return;
         }
@@ -879,6 +895,9 @@ static void wifi_mqtt_loop() {
 }
 
 void setup() {
+#ifdef RTC_CNTL_BROWN_OUT_REG
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#endif
     pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
 
     Serial.begin(115200);
@@ -912,6 +931,7 @@ void setup() {
     wifi_start_at = millis() + WIFI_START_DELAY_MS;
     last_wifi_attempt = 0;
     wifi_begin_at = 0;
+    wifi_armed_at = 0;
     if (!wifi_ssid[0]) {
         Serial.println("Wi-Fi čeká na USB inicializaci (KCFG)");
     }
@@ -935,12 +955,16 @@ void loop() {
 
     if (usb_announce) {
         usb_announce = false;
-        if (wifi_ssid[0] && WiFi.status() != WL_CONNECTED && !wifi_begin_at) {
-            wifi_begin_now("usb");
-        }
         if (mqtt.connected()) {
             mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
             publish_usb();
+        }
+    }
+
+    if (usb_mounted && (millis() - last_hid_keep) >= HID_KEEPALIVE_MS) {
+        last_hid_keep = millis();
+        if (!hid_holding && !macros_any_active() && !pending_fn && !pending_mouse && !pending_enter) {
+            Keyboard.releaseAll();
         }
     }
 

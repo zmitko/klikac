@@ -218,6 +218,7 @@ if (!gotLock) {
     } catch (err) {
       appLog.push("mqtt", `broker start fail: ${err.message}`);
     }
+    appLog.push("app", `Klikač ${app.getVersion()}`);
     core = new AppCore({
       statePath: path.join(app.getPath("userData"), "state.json"),
       mqtt: {

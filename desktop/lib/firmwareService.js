@@ -140,7 +140,7 @@ class FirmwareService {
     const elf = latest && latest.firmwareElfUrl
       ? await this.ensureAsset(latest.firmwareElfUrl, "firmware.elf")
       : this.bundledFile("firmware.elf");
-    return { firmwareBin, factoryBin, elf };
+    return { firmwareBin, factoryBin, elf, version: latest ? latest.version : "" };
   }
 
   async flash(opts = {}) {
@@ -163,8 +163,9 @@ class FirmwareService {
       if (!mqttHost) {
         throw new Error("Neznám IP tohoto PC. Připoj PC1 na LAN.");
       }
-      const { firmwareBin, factoryBin, elf } = await this.resolveImages();
+      const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
       const usbImage = elf || factoryBin || firmwareBin;
+      this.setLog(`Nahrávám ${path.basename(usbImage)}${version ? ` ${version}` : ""}`);
       const ports = await listSerialPorts();
       this.state.ports = ports;
       const port = pickFlashPort(ports);
