@@ -56,17 +56,20 @@ Get-Content -LiteralPath $cmdPath | ForEach-Object {
   Start-Sleep -Milliseconds 200
 }
 $gotApply = $false
-$end = (Get-Date).AddSeconds(8)
+$gotSaved = $false
+$end = (Get-Date).AddSeconds(25)
 while ((Get-Date) -lt $end) {
   try {
     $line = $p.ReadLine()
     if ($line) { Write-Output $line }
-    if ($line -match "KLOG apply") { $gotApply = $true; break }
+    if ($line -match "KLOG apply") { $gotApply = $true }
+    if ($line -match "KLOG mqtt=192\.|KLOG saved mqtt=192\.") { $gotSaved = $true; break }
   } catch { }
 }
 $p.Close()
 if (-not $ready) { Write-Output "KLOG no-banner" }
 if (-not $gotApply) { Write-Output "KLOG no-apply" }
+if (-not $gotSaved) { Write-Output "KLOG no-persist" }
 `;
   fs.writeFileSync(psFile, script, "utf8");
   const { stdout, stderr } = await execFileAsync("powershell.exe", [
@@ -75,7 +78,7 @@ if (-not $gotApply) { Write-Output "KLOG no-apply" }
     "-File", psFile,
   ], {
     windowsHide: true,
-    timeout: 35000,
+    timeout: 60000,
   });
   const out = `${stdout || ""}\n${stderr || ""}`;
   out.split(/\r?\n/).forEach((line) => {

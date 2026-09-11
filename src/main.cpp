@@ -640,25 +640,40 @@ static void mqtt_disconnect_cleanup() {
 
 static void wifi_begin_now(const char *why);
 
-static void cfg_save() {
-    prefs.begin("klikac", false);
+static bool cfg_save() {
+    if (!prefs.begin("klikac", false)) {
+        Serial.println("KLOG nvs-save-fail");
+        return false;
+    }
     prefs.putString("wifi", wifi_ssid);
     prefs.putString("pass", wifi_pass);
     prefs.putString("mqtt", mqtt_host);
     prefs.end();
+    if (!prefs.begin("klikac", true)) {
+        Serial.println("KLOG nvs-verify-fail");
+        return false;
+    }
+    const String w = prefs.isKey("wifi") ? prefs.getString("wifi", "") : "";
+    const String m = prefs.isKey("mqtt") ? prefs.getString("mqtt", "") : "";
+    prefs.end();
+    Serial.print("KLOG saved wifi=");
+    Serial.println(w.length() ? w : "(empty)");
+    Serial.print("KLOG saved mqtt=");
+    Serial.println(m.length() ? m : "(empty)");
+    return w.length() > 0 && m.length() > 0;
 }
 
 static void cfg_load() {
     wifi_ssid[0] = 0;
     wifi_pass[0] = 0;
     mqtt_host[0] = 0;
-    // RW: read-only begin() na prázdném NVS vrací NOT_FOUND a nic nenačte.
     if (!prefs.begin("klikac", false)) {
         Serial.println("KLOG nvs-fail");
+        return;
     }
-    const String w = prefs.getString("wifi", "");
-    const String p = prefs.getString("pass", "");
-    const String m = prefs.getString("mqtt", "");
+    const String w = prefs.isKey("wifi") ? prefs.getString("wifi", "") : "";
+    const String p = prefs.isKey("pass") ? prefs.getString("pass", "") : "";
+    const String m = prefs.isKey("mqtt") ? prefs.getString("mqtt", "") : "";
     prefs.end();
     if (w.length() > 0) {
         strncpy(wifi_ssid, w.c_str(), sizeof(wifi_ssid) - 1);
@@ -697,17 +712,16 @@ static void cfg_handle_line(char *line) {
         return;
     }
     if (strcmp(line, "KCFG APPLY") == 0) {
-        cfg_save();
+        const bool ok = cfg_save();
         Serial.print("KLOG apply mqtt=");
         Serial.println(mqtt_host);
-        if (mqtt.connected()) {
-            mqtt.disconnect();
-            mqtt_disconnect_cleanup();
+        if (!ok) {
+            Serial.println("KLOG apply-nvs-fail");
+            return;
         }
-        wifi_start_at = 0;
-        if (wifi_ssid[0]) {
-            wifi_begin_now("apply");
-        }
+        Serial.println("KLOG restart");
+        delay(300);
+        ESP.restart();
     }
 }
 
@@ -805,7 +819,7 @@ static void wifi_begin_now(const char *why) {
     Serial.print(why);
     Serial.print(" ");
     Serial.println(wifi_ssid);
-    WiFi.persistent(false);
+    WiFi.persistent(true);
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setSleep(false);
