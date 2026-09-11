@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, clipboard } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, clipboard, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { AppCore } = require("./lib/appCore");
@@ -8,6 +8,7 @@ const { MqttBroker } = require("./lib/mqttBroker");
 const { AppLog } = require("./lib/appLog");
 const { MQTT_PORT, MQTT_USER, MQTT_PASSWORD, OTA_PASSWORD } = require("./lib/mqttCreds");
 const { lanIPv4 } = require("./lib/lan");
+const { buildMacroPack, parseMacroPack, fileNameFor } = require("./lib/macroPack");
 
 let mainWindow = null;
 let tray = null;
@@ -182,6 +183,7 @@ function bindIpc() {
     });
   });
   ipcMain.handle("ota-firmware", async () => firmware.ota());
+  ipcMain.handle("diagnose-board", async () => firmware.diagnose());
   ipcMain.handle("clear-log", () => {
     if (appLog) {
       appLog.clear();
@@ -192,9 +194,59 @@ function bindIpc() {
     clipboard.writeText(String(text ?? ""));
     return true;
   });
+  ipcMain.handle("export-macro", async (event, slot) => {
+    const pack = buildMacroPack(slot || {});
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showSaveDialog(win, {
+      title: "Exportovat makro",
+      defaultPath: fileNameFor(pack.macro.name),
+      filters: [
+        { name: "Klikač makro", extensions: ["klikac.json"] },
+        { name: "JSON", extensions: ["json"] },
+      ],
+    });
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+    fs.writeFileSync(result.filePath, `${JSON.stringify(pack, null, 2)}\n`, "utf8");
+    return { ok: true };
+  });
+  ipcMain.handle("import-macro", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(win, {
+      title: "Načíst makro",
+      filters: [
+        { name: "Klikač makro", extensions: ["klikac.json", "json"] },
+        { name: "JSON", extensions: ["json"] },
+      ],
+      properties: ["openFile"],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
+      return { canceled: true };
+    }
+    let raw;
+    try {
+      raw = fs.readFileSync(result.filePaths[0], "utf8");
+    } catch {
+      throw new Error("Soubor makra se nepodařilo načíst.");
+    }
+    return { ok: true, macro: parseMacroPack(raw) };
+  });
   ipcMain.handle("health-check", async () => {
     if (broker) {
       broker.refreshLan();
+    }
+    if (broker && !broker.hasDevice()) {
+      if (appLog) {
+        appLog.push("app", "healthcheck: destička není na brokeru (jen Klikač). Zapoj COM na PC1 a v kolečku Číst destičku.");
+      }
+      const snap = attachSnap(core.snapshot());
+      if (snap.device) {
+        snap.device.health = "missing";
+        snap.device.present = false;
+        snap.device.live = false;
+      }
+      return snap;
     }
     const snap = attachSnap(await core.healthCheck());
     if (snap.device && broker && broker.hasDevice()) {

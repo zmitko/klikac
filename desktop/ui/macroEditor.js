@@ -23,6 +23,7 @@
     helpId: "",
     validation: null,
     byLine: new Map(),
+    maximized: false,
   };
 
   let hooks = { onSave: () => {}, onToast: () => {} };
@@ -989,11 +990,44 @@
     }
   }
 
-  // ---------- otevření / zavření ----------
-  function open(slot, callbacks) {
-    hooks = { onSave: () => {}, onToast: () => {}, ...(callbacks || {}) };
-    state.open = true;
-    state.index = slot.index;
+  function readMaxPref() {
+    try {
+      return localStorage.getItem("klikac.macroEditor.max") === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function setMaximized(on) {
+    state.maximized = !!on;
+    $("macro-modal").classList.toggle("is-max", state.maximized);
+    const btn = $("macro-max");
+    btn.setAttribute("aria-pressed", state.maximized ? "true" : "false");
+    btn.title = state.maximized ? "Obnovit velikost" : "Maximalizovat";
+    btn.textContent = state.maximized ? "⛶" : "⤢";
+    try {
+      localStorage.setItem("klikac.macroEditor.max", state.maximized ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+  }
+
+  function snapshotSlot() {
+    if (state.type === TYPE.COMPLEX && state.mode === "code") {
+      state.program = $("macro-code").value;
+      state.codeText = state.program;
+    } else if (state.type === TYPE.COMPLEX) {
+      syncText();
+    }
+    return {
+      name: state.name,
+      type: state.type,
+      seq: state.seq,
+      program: state.program,
+    };
+  }
+
+  function loadSlotFields(slot) {
     state.name = slot.name || "";
     state.type = slot.type === TYPE.COMPLEX ? TYPE.COMPLEX : TYPE.SIMPLE;
     state.seq = slot.seq || "";
@@ -1018,6 +1052,21 @@
     } else {
       state.ast = ast.newProgram();
     }
+  }
+
+  function hasContent() {
+    return state.type === TYPE.COMPLEX
+      ? !!String(state.program || "").trim()
+      : !!String(state.seq || "").trim();
+  }
+
+  // ---------- otevření / zavření ----------
+  function open(slot, callbacks) {
+    hooks = { onSave: () => {}, onToast: () => {}, ...(callbacks || {}) };
+    state.open = true;
+    state.index = slot.index;
+    loadSlotFields(slot);
+    setMaximized(readMaxPref());
     $("macro-modal").hidden = false;
     render();
     if (state.type === TYPE.COMPLEX) {
@@ -1050,6 +1099,62 @@
   // ---------- události ----------
   $("macro-close").addEventListener("click", close);
   $("macro-backdrop").addEventListener("click", close);
+  $("macro-max").addEventListener("click", () => setMaximized(!state.maximized));
+  $("macro-head").addEventListener("dblclick", (ev) => {
+    if (ev.target.closest("input, button, textarea, select, label")) {
+      return;
+    }
+    setMaximized(!state.maximized);
+  });
+
+  async function exportCurrent() {
+    if (!window.ovladac || typeof window.ovladac.exportMacro !== "function") {
+      hooks.onToast("Export makra v tomhle okně nejde.");
+      return;
+    }
+    try {
+      const result = await window.ovladac.exportMacro(snapshotSlot());
+      if (result && result.canceled) {
+        return;
+      }
+      hooks.onToast("Makro uložené");
+    } catch (err) {
+      hooks.onToast(err.message || "Export se nepovedl");
+    }
+  }
+
+  async function importCurrent() {
+    if (!window.ovladac || typeof window.ovladac.importMacro !== "function") {
+      hooks.onToast("Načtení makra v tomhle okně nejde.");
+      return;
+    }
+    snapshotSlot();
+    if (hasContent() && !window.confirm("Nahradit toto makro souborem? Rozepsané změny v tomhle slotu zmizí.")) {
+      return;
+    }
+    try {
+      const result = await window.ovladac.importMacro();
+      if (result && result.canceled) {
+        return;
+      }
+      loadSlotFields(result.macro);
+      save();
+      render();
+      if (state.type === TYPE.COMPLEX) {
+        runValidation(true);
+      }
+      hooks.onToast("Makro načtené");
+    } catch (err) {
+      hooks.onToast(err.message || "Načtení se nepovedlo");
+    }
+  }
+
+  $("macro-export").addEventListener("click", () => {
+    exportCurrent();
+  });
+  $("macro-import").addEventListener("click", () => {
+    importCurrent();
+  });
 
   $("macro-name").addEventListener("input", () => {
     state.name = $("macro-name").value;
@@ -1150,6 +1255,11 @@
 
   document.addEventListener("keydown", (ev) => {
     if (!state.open) {
+      return;
+    }
+    if (ev.key === "F11") {
+      ev.preventDefault();
+      setMaximized(!state.maximized);
       return;
     }
     if (ev.key === "Escape") {

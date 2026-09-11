@@ -10,9 +10,12 @@ contextBridge.exposeInMainWorld("ovladac", {
   installUpdate: () => ipcRenderer.invoke("install-update"),
   flashFirmware: (opts) => ipcRenderer.invoke("flash-firmware", opts || {}),
   otaFirmware: () => ipcRenderer.invoke("ota-firmware"),
+  diagnoseBoard: () => ipcRenderer.invoke("diagnose-board"),
   healthCheck: () => ipcRenderer.invoke("health-check"),
   clearLog: () => ipcRenderer.invoke("clear-log"),
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
+  exportMacro: (slot) => ipcRenderer.invoke("export-macro", slot),
+  importMacro: () => ipcRenderer.invoke("import-macro"),
   onState: (handler) => {
     ipcRenderer.on("state", (_event, snap) => handler(snap));
   },

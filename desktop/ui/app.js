@@ -276,7 +276,7 @@ function apply(snap) {
   $("esp-meta").textContent = bits.join(" · ");
   const net = snap.net || {};
   $("broker-meta").textContent = net.lanIp
-    ? `broker ${net.lanIp}:${net.port || 1883}${net.clients ? ` · ${net.clients} klient` : ""}${net.devices ? " · destička ano" : ""}`
+    ? `broker ${net.lanIp}:${net.port || 1883} · ${net.clients || 0} klient · destička ${net.devices ? "ano" : "ne"}`
     : "broker —";
 
   const fw = snap.firmware || {};
@@ -292,6 +292,8 @@ function apply(snap) {
   $("flash-fw").textContent = flashing && fw.method === "usb" ? "Inicializuji…" : "Inicializovat přes USB";
   $("flash-fw-force").disabled = flashing;
   $("flash-fw-force").textContent = flashing && fw.method === "usb" ? "Zapisuji…" : "Vynutit zápis";
+  $("board-diag").disabled = flashing;
+  $("board-diag").textContent = flashing && fw.method === "com" ? "Čtu destičku…" : "Číst destičku (COM)";
   $("ota-fw").disabled = flashing || !device.ip;
   $("ota-fw").textContent = flashing && fw.method === "wifi" ? "Nahrávám přes Wi-Fi…" : "Aktualizovat firmware (Wi-Fi)";
   const quickOta = $("fw-quick-ota");
@@ -567,6 +569,19 @@ async function runUsbInit(force) {
 $("flash-fw").addEventListener("click", () => runUsbInit(false));
 $("flash-fw-force").addEventListener("click", () => runUsbInit(true));
 
+$("board-diag").addEventListener("click", async () => {
+  $("board-diag").disabled = true;
+  setGearOpen(true);
+  try {
+    const snap = await window.ovladac.diagnoseBoard();
+    apply(await window.ovladac.getState());
+    toast((snap.diagnosis && snap.diagnosis.hint) || snap.log || "Čtení destičky hotové");
+  } catch (err) {
+    toast(err.message);
+    apply(await window.ovladac.getState());
+  }
+});
+
 async function runOta() {
   $("ota-fw").disabled = true;
   $("fw-quick-ota").disabled = true;
@@ -649,6 +664,8 @@ $("health-check").addEventListener("click", async () => {
     const net = snap.net || {};
     if (device.health === "ok") {
       toast("Destička živá");
+    } else if (device.health === "missing" || !(net.devices)) {
+      toast("Destička není na brokeru. Zapoj COM na PC1 a Číst destičku.");
     } else if ((net.clients || 0) >= 2) {
       toast("Na brokeru je klient, ping bez odpovědi");
     } else {

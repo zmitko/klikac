@@ -11,8 +11,13 @@ const { listSerialPorts, pickFlashPort } = require("./serialPorts");
 const { otaTopic } = require("./releaseMeta");
 const { lanIPv4 } = require("./lan");
 const { provisionSerial } = require("./serialProvision");
+const { diagnoseSerial } = require("./serialDiagnose");
 const { OTA_PASSWORD } = require("./mqttCreds");
 const { buildCfgFlash, CFG_FLASH_ADDR } = require("./cfgFlashBlob");
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 class FirmwareService {
   constructor({ mqtt, otaPassword, onChange, onLog }) {
@@ -191,31 +196,24 @@ class FirmwareService {
           image: usbImage,
         });
         this.state.status = "uploading";
-        await new Promise((r) => setTimeout(r, 4000));
+        await sleep(4000);
+      };
+      const writeFlashOnly = async () => {
+        await this.writeCfgFlash({
+          port: port.path,
+          wifiSsid,
+          wifiPassword,
+          mqttHost,
+        });
+        this.setLog("Síť je ve flash. Sériový FORCE neposílám — ten by zápis mohl smazat.");
       };
       if (force) {
         await flashFw("Vynucený zápis: nahrávám firmware…");
-        let flashOk = false;
         try {
-          await this.writeCfgFlash({
-            port: port.path,
-            wifiSsid,
-            wifiPassword,
-            mqttHost,
-          });
-          flashOk = true;
+          await writeFlashOnly();
         } catch (flashErr) {
           this.setLog(`Přímý zápis do flash selhal (${flashErr.message}). Zkouším sériový FORCE…`);
-        }
-        this.setLog("Čekám na restart destičky…");
-        await new Promise((r) => setTimeout(r, 4000));
-        try {
           await sendCfg(true);
-        } catch (serialErr) {
-          if (!flashOk) {
-            throw serialErr;
-          }
-          this.setLog(`${serialErr.message} Flash zápis už je hotový — destička si síť načte po restartu.`);
         }
       } else {
         this.state.status = "uploading";
@@ -228,38 +226,14 @@ class FirmwareService {
             this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
             await sendCfg(false);
           } else if (provErr.code === "NVS_FAIL") {
-            await flashFw("Paměť destičky odmítla zápis, mažu ji nahráním firmware a zkouším znovu…");
-            let flashOk = false;
-            try {
-              await this.writeCfgFlash({
-                port: port.path,
-                wifiSsid,
-                wifiPassword,
-                mqttHost,
-              });
-              flashOk = true;
-            } catch (flashErr) {
-              this.setLog(`Přímý zápis do flash selhal (${flashErr.message}).`);
-            }
-            this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
-            await new Promise((r) => setTimeout(r, 4000));
-            try {
-              await sendCfg(true);
-            } catch (serialErr) {
-              if (!flashOk) {
-                throw serialErr;
-              }
-              this.setLog(`${serialErr.message} Flash zápis už je hotový — destička si síť načte po restartu.`);
-            }
+            await flashFw("Paměť destičky odmítla zápis, nahrávám firmware a píšu síť přímo do flash…");
+            await writeFlashOnly();
           } else {
             throw provErr;
           }
         }
       }
-      this.state.status = "ok";
-      this.state.progress = 1;
-      this.setLog(`Hotovo. MQTT broker ${mqttHost}:1883. Odpoj COM a zapoj HID USB do herního PC.`);
-      return this.snapshot();
+      return this.finishInit(port.path, mqttHost, wifiSsid);
     } catch (err) {
       this.state.error = err.message;
       this.state.status = "error";
@@ -358,12 +332,96 @@ class FirmwareService {
     return espflash;
   }
 
+  async waitForMqttJoin(seconds = 30) {
+    this.setLog(`Nech COM zapojený. Čekám až ${seconds} s, až destička naskočí na MQTT…`);
+    const deadline = Date.now() + seconds * 1000;
+    while (Date.now() < deadline) {
+      if (this.mqtt && typeof this.mqtt.isLive === "function" && this.mqtt.isLive()) {
+        const snap = this.mqtt.snapshot();
+        this.setLog(`Destička je na MQTT${snap.ip ? ` (${snap.ip})` : ""}.`);
+        return true;
+      }
+      const snap = this.mqtt ? this.mqtt.snapshot() : {};
+      if (snap.status === "online" || snap.ip) {
+        this.setLog(`Destička je na MQTT${snap.ip ? ` (${snap.ip})` : ""}.`);
+        return true;
+      }
+      await sleep(400);
+    }
+    return false;
+  }
+
+  async runDiagnoseOn(portPath) {
+    this.setLog(`Čtu destičku na ${portPath} (reset + log + KCFG STATUS)…`);
+    const info = await diagnoseSerial({
+      port: portPath,
+      onLine: (line) => this.setLog(line),
+    });
+    const bits = [
+      info.firmware ? `fw ${info.firmware}` : "",
+      `wifi=${info.wifi || "(empty)"}`,
+      `mqtt=${info.mqtt || "(empty)"}`,
+      info.wifiSta ? `sta=${info.wifiSta}${info.wifiStaLabel ? ` ${info.wifiStaLabel}` : ""}` : "",
+      info.wifiIp ? `ip=${info.wifiIp}` : "",
+      info.mqttRc !== "" && info.mqttRc != null ? `mqtt-rc=${info.mqttRc}` : "",
+    ].filter(Boolean);
+    this.setLog(bits.join(" · "));
+    this.setLog(info.hint);
+    return info;
+  }
+
+  async finishInit(portPath, mqttHost, wifiSsid) {
+    if (await this.waitForMqttJoin(30)) {
+      this.state.status = "ok";
+      this.state.progress = 1;
+      this.setLog(`Hotovo. Destička je na MQTT. Odpoj COM a zapoj HID do herního PC. Broker ${mqttHost}:1883.`);
+      return this.snapshot();
+    }
+    this.setLog("Destička na MQTT nedorazila. Čtu COM, COM neodpojuj…");
+    const info = await this.runDiagnoseOn(portPath);
+    throw new Error(
+      info.hint
+      || `Destička se po zápisu „${wifiSsid}“ / ${mqttHost} na MQTT nepřipojila. COM nech zapojený a zkus Číst destičku.`,
+    );
+  }
+
+  async diagnose() {
+    if (this.busy) {
+      throw new Error("Nahrávání už běží");
+    }
+    this.busy = true;
+    this.state.error = "";
+    this.state.method = "com";
+    this.state.status = "uploading";
+    this.setLog("Připravuji čtení destičky přes COM…");
+    try {
+      const ports = await listSerialPorts();
+      this.state.ports = ports;
+      const port = pickFlashPort(ports);
+      if (!port) {
+        throw new Error("Flash kabel (CH343/COM) na tomhle PC není. Čtení destičky dělej na PC1 s programovacím USB.");
+      }
+      const info = await this.runDiagnoseOn(port.path);
+      this.state.status = "ok";
+      this.state.progress = 1;
+      return { ...this.snapshot(), diagnosis: info };
+    } catch (err) {
+      this.state.error = err.message;
+      this.state.status = "error";
+      this.setLog(err.message);
+      throw err;
+    } finally {
+      this.busy = false;
+      this.emit();
+    }
+  }
+
   async writeCfgFlash({ port, wifiSsid, wifiPassword, mqttHost }) {
     const blob = buildCfgFlash({ wifiSsid, wifiPassword, mqttHost });
     const file = path.join(this.cacheDir(), "klikac-cfg.bin");
     fs.writeFileSync(file, blob);
     const hex = `0x${CFG_FLASH_ADDR.toString(16)}`;
-    this.setLog(`Zapisuji Wi-Fi/MQTT přímo do flash ${hex} (obejdu NVS)…`);
+    this.setLog(`Zapisuji Wi-Fi „${wifiSsid}“ / MQTT ${mqttHost} přímo do flash ${hex} (obejdu NVS)…`);
     const espflash = await this.ensureEspflash();
     await this.runProcess(espflash, [
       "write-bin",

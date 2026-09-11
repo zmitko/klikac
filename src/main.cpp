@@ -858,13 +858,37 @@ static bool cfg_nvs_write_and_verify() {
     return ok;
 }
 
-static bool cfg_flash_write_and_verify() {
+static bool cfg_flash_matches() {
     const uint32_t addr = cfg_safe_flash_addr();
     if (!addr) {
         return false;
     }
+    CfgFlash blob;
+    memset(&blob, 0, sizeof(blob));
+    if (esp_flash_read(NULL, &blob, addr, sizeof(blob)) != ESP_OK) {
+        return false;
+    }
+    return cfg_apply_blob(&blob)
+        && strcmp(blob.wifi, wifi_ssid) == 0
+        && strcmp(blob.mqtt, mqtt_host) == 0;
+}
+
+static bool cfg_flash_write_and_verify() {
+    const uint32_t addr = cfg_safe_flash_addr();
+    if (!addr) {
+        Serial.println("KLOG flash-no-addr");
+        return false;
+    }
+    if (cfg_flash_matches()) {
+        Serial.println("KLOG flash-already");
+        return true;
+    }
     Serial.print("KLOG flash-addr 0x");
     Serial.println(addr, HEX);
+    Serial.print("KLOG flash-write n=");
+    Serial.print((int)strlen(wifi_ssid));
+    Serial.print("/");
+    Serial.println((int)strlen(mqtt_host));
     CfgFlash blob;
     cfg_fill_blob(&blob);
     esp_err_t err = esp_flash_erase_region(NULL, addr, 4096);
@@ -907,7 +931,10 @@ static bool cfg_flash_load() {
     if (!cfg_apply_blob(&blob)) {
         return false;
     }
-    Serial.println("KLOG cfg-flash");
+    Serial.print("KLOG cfg-flash wifi=");
+    Serial.print(wifi_ssid);
+    Serial.print(" mqtt=");
+    Serial.println(mqtt_host);
     return true;
 }
 
@@ -924,7 +951,10 @@ static bool cfg_nvs_load() {
     size_t n = sizeof(blob);
     if (nvs_get_blob(handle, "cfg", &blob, &n) == ESP_OK && cfg_apply_blob(&blob)) {
         nvs_close(handle);
-        Serial.println("KLOG cfg-nvs");
+        Serial.print("KLOG cfg-nvs wifi=");
+        Serial.print(wifi_ssid);
+        Serial.print(" mqtt=");
+        Serial.println(mqtt_host);
         return true;
     }
     char w[33] = {0};
@@ -945,7 +975,10 @@ static bool cfg_nvs_load() {
         strncpy(wifi_pass, p, sizeof(wifi_pass) - 1);
     }
     strncpy(mqtt_host, m, sizeof(mqtt_host) - 1);
-    Serial.println("KLOG cfg-nvs");
+    Serial.print("KLOG cfg-nvs wifi=");
+    Serial.print(wifi_ssid);
+    Serial.print(" mqtt=");
+    Serial.println(mqtt_host);
     return true;
 }
 
@@ -959,12 +992,20 @@ static bool cfg_save(bool force_flash) {
     }
     if (force_flash) {
         Serial.println("KLOG force-flash");
+        if (cfg_flash_matches()) {
+            Serial.println("KLOG flash-already");
+            return true;
+        }
         if (cfg_flash_write_and_verify()) {
             cfg_nvs_write_and_verify();
             return true;
         }
     }
     if (cfg_nvs_write_and_verify()) {
+        if (!cfg_flash_matches()) {
+            Serial.println("KLOG flash-mirror");
+            cfg_flash_write_and_verify();
+        }
         return true;
     }
     Serial.println("KLOG flash-fallback");
@@ -981,9 +1022,10 @@ static void cfg_load() {
     wifi_ssid[0] = 0;
     wifi_pass[0] = 0;
     mqtt_host[0] = 0;
-    if (cfg_nvs_load() || cfg_flash_load()) {
+    if (cfg_flash_load() || cfg_nvs_load()) {
         return;
     }
+    Serial.println("KLOG cfg-none");
     strncpy(wifi_ssid, WIFI_SSID, sizeof(wifi_ssid) - 1);
     strncpy(wifi_pass, WIFI_PASSWORD, sizeof(wifi_pass) - 1);
     strncpy(mqtt_host, MQTT_HOST, sizeof(mqtt_host) - 1);
@@ -1006,6 +1048,21 @@ static void cfg_handle_line(char *line) {
         copy_cfg_arg(mqtt_host, sizeof(mqtt_host), line + 10);
         Serial.print("KLOG mqtt-ok n=");
         Serial.println(strlen(mqtt_host));
+        return;
+    }
+    if (strcmp(line, "KCFG STATUS") == 0) {
+        Serial.print("KLOG fw=");
+        Serial.println(FIRMWARE_VERSION);
+        Serial.print("KLOG wifi=");
+        Serial.println(wifi_ssid[0] ? wifi_ssid : "(empty)");
+        Serial.print("KLOG mqtt=");
+        Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
+        Serial.print("KLOG wifi-sta=");
+        Serial.println((int)WiFi.status());
+        Serial.print("KLOG wifi-ip=");
+        Serial.println(WiFi.localIP());
+        Serial.print("KLOG mqtt-rc=");
+        Serial.println(mqtt.state());
         return;
     }
     if (strcmp(line, "KCFG APPLY") == 0 || strcmp(line, "KCFG FORCE") == 0) {
@@ -1060,7 +1117,9 @@ static bool mqtt_connect() {
     const bool ok = mqtt.connect(mqtt_client_id, MQTT_USER, MQTT_PASSWORD, MQTT_TOPIC_STATUS, 1, true, "offline");
     if (!ok) {
         Serial.print("MQTT failed, rc=");
-        Serial.println(mqtt.state());
+        Serial.print(mqtt.state());
+        Serial.print(" host=");
+        Serial.println(mqtt_host);
         return false;
     }
 

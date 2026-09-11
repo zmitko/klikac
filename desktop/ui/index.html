@@ -136,7 +136,9 @@
                     </div>
                   </div>
                   <button type="button" class="fw-btn force" id="flash-fw-force">Vynutit zápis</button>
-                  <p class="muted tiny wifi-hint">Když destička Wi‑Fi neuloží (prázdné saved / abort). Nahraje firmware a síť zapíše přímo do flash, obejde rozbitou NVS.</p>
+                  <p class="muted tiny wifi-hint">Když destička Wi‑Fi neuloží (prázdné saved / abort). Nahraje firmware a síť zapíše přímo do flash. COM nech, dokud v logu nebude destička na MQTT.</p>
+                  <button type="button" class="fw-btn secondary" id="board-diag">Číst destičku (COM)</button>
+                  <p class="muted tiny wifi-hint">Bez MQTT. Resetne destičku přes programovací USB a vypíše, jestli má Wi‑Fi, vidí síť a kam sahá broker.</p>
                   <button type="button" class="fw-btn secondary" id="ota-fw">Aktualizovat firmware (Wi-Fi)</button>
                   <div class="muted tiny" id="fw-log"></div>
                 </div>
@@ -242,7 +244,7 @@
         <div class="help-tips">
           <div>
             <b>Destička není na MQTT</b>
-            <span>Stejná Wi‑Fi (ne 5 GHz, ne host), firewall port 1883, znovu USB init s aktuální IP PC1.</span>
+            <span>Na brokeru je jen Klikač. COM zpět do PC1, v kolečku <b>Číst destičku</b>. Stejná Wi‑Fi jen 2,4 GHz, přesné SSID, firewall 1883. COM neodpojuj, dokud log neřekne destička na MQTT.</span>
           </div>
           <div>
             <b>Klikač se nepřipojuje k brokeru</b>
@@ -269,6 +271,10 @@
             <span>Otevři <b>editor V2</b> a dej <b>✓ VALIDOVAT MAKRO</b> — makro s chybou se schválně nespustí. Chyba v seznamu je klikací a skočí na místo v programu.</span>
           </div>
           <div>
+            <b>Sdílení makra</b>
+            <span>Otevři konkrétní makro → <b>Exportovat</b> (soubor <code>*.klikac.json</code>). Na druhém PC otevři cílový slot → <b>Načíst</b>. Editor jde <b>maximalizovat</b> (⤢ nebo F11).</span>
+          </div>
+          <div>
             <b>Nová domácnost / jiná IP</b>
             <span>V kolečku nová Wi‑Fi a IP, init znovu přes COM na PC1. Pak zase HID do PC2. Když destička Wi‑Fi neuloží (<code>saved (empty)</code> / <code>abort</code>), v kolečku dej <b>Vynutit zápis</b> — nahraje firmware a síť zapíše přímo do flash.</span>
           </div>
@@ -288,7 +294,7 @@
   <div class="macro-modal" id="macro-modal" hidden>
     <div class="macro-backdrop" id="macro-backdrop"></div>
     <div class="macro-dialog" role="dialog" aria-modal="true" aria-labelledby="macro-title">
-      <div class="macro-head">
+      <div class="macro-head" id="macro-head">
         <div class="macro-head-main">
           <span class="macro-slot-no" id="macro-slot-no">1</span>
           <label class="macro-name-field">
@@ -305,6 +311,9 @@
             <button type="button" data-mode="visual">VIZUÁLNĚ</button>
             <button type="button" data-mode="code">KÓD</button>
           </div>
+          <button type="button" class="ghost-btn" id="macro-export" title="Uložit toto makro do souboru">Exportovat</button>
+          <button type="button" class="ghost-btn" id="macro-import" title="Nahradit toto makro souborem z jiného PC">Načíst</button>
+          <button type="button" class="gear-btn" id="macro-max" title="Maximalizovat" aria-pressed="false">⤢</button>
           <button type="button" class="gear-btn" id="macro-close" title="Zavřít">×</button>
         </div>
       </div>

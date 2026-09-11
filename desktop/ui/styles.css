@@ -1235,6 +1235,11 @@ body.disabled .run-btn {
   display: none;
 }
 
+.macro-modal.is-max {
+  padding: 0;
+  place-items: stretch;
+}
+
 .macro-backdrop {
   position: absolute;
   inset: 0;
@@ -1254,6 +1259,13 @@ body.disabled .run-btn {
   overflow: hidden;
 }
 
+.macro-modal.is-max .macro-dialog {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+}
+
 .macro-head {
   display: flex;
   align-items: center;
@@ -1261,6 +1273,7 @@ body.disabled .run-btn {
   gap: 12px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
 
 .macro-head-main,
@@ -1268,6 +1281,11 @@ body.disabled .run-btn {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.macro-head-actions {
+  justify-content: flex-end;
 }
 
 .macro-slot-no {
@@ -1299,6 +1317,14 @@ body.disabled .run-btn {
   color: var(--text);
   outline: none;
   min-width: 200px;
+}
+
+.macro-modal.is-max .macro-name-field input {
+  min-width: 280px;
+}
+
+.macro-modal.is-max .macro-body {
+  grid-template-columns: 1fr min(360px, 28vw);
 }
 
 .macro-name-field input:focus {
