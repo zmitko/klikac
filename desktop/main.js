@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, clipboard } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { AppCore } = require("./lib/appCore");
@@ -169,6 +169,7 @@ function bindIpc() {
     core.mouseClick(button);
     return attachSnap(core.snapshot());
   });
+  ipcMain.handle("validate-macro", (_event, slot) => core.validateMacro(slot));
   ipcMain.handle("check-update", async () => updater.check());
   ipcMain.handle("install-update", async () => updater.install());
   ipcMain.handle("flash-firmware", async () => {
@@ -185,6 +186,10 @@ function bindIpc() {
       appLog.clear();
     }
     return attachSnap(core.snapshot());
+  });
+  ipcMain.handle("copy-text", (_event, text) => {
+    clipboard.writeText(String(text ?? ""));
+    return true;
   });
   ipcMain.handle("health-check", async () => {
     if (broker) {

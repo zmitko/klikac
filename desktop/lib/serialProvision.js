@@ -73,10 +73,12 @@ while ((Get-Date) -lt $end) {
     if ($line -match "KLOG apply-empty") { $emptyFail = $true; break }
     if ($line -match "KLOG apply-nvs-fail|KLOG nvs-save-fail|KLOG nvs-verify-fail") { $nvsFail = $true; break }
     if ($line -match "KLOG (flash-)?saved mqtt=" -and $line -notmatch "\\(empty\\)") { $gotSaved = $true }
+    if ($line -match "abort\(\)") { $nvsFail = $true }
     if ($line -match "KLOG restart") { break }
   } catch { }
 }
 $p.Close()
+if ($gotSaved) { $nvsFail = $false }
 if ($emptyFail) { Write-Output "KLOG no-ssid" }
 if ($nvsFail) { Write-Output "KLOG nvs-fail" }
 if (-not $gotApply -and -not $gotSaved -and -not $nvsFail -and -not $emptyFail) { Write-Output "KLOG no-apply" }
@@ -112,10 +114,17 @@ if (-not $gotSaved -and -not $nvsFail -and -not $emptyFail) { Write-Output "KLOG
     throw err;
   }
   if (/KLOG no-apply/.test(out)) {
+    if (/KLOG wifi-ok|flash-fallback|abort\(\)|KLOG saved wifi=\(empty\)/.test(out)) {
+      const err = new Error("Destička nedokázala uložit Wi-Fi/MQTT do paměti.");
+      err.code = "NVS_FAIL";
+      throw err;
+    }
     throw new Error("Destička nepřijala KCFG APPLY. Zkus USB init znovu.");
   }
   if (/KLOG no-persist/.test(out)) {
-    throw new Error("Wi-Fi/MQTT se do destičky nezapsalo. Zkus USB init znovu.");
+    const err = new Error("Wi-Fi/MQTT se do destičky nezapsalo. Zkus USB init znovu.");
+    err.code = "NVS_FAIL";
+    throw err;
   }
 }
 

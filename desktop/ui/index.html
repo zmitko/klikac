@@ -8,8 +8,6 @@
 </head>
 <body>
   <div class="page">
-    <section class="fkey-row" id="fkeys"></section>
-
     <section class="grid-3">
       <div class="col-left">
         <article class="card col-card">
@@ -40,6 +38,34 @@
           </button>
         </article>
 
+        <div class="kb-dock">
+          <button type="button" class="kb-btn" id="kb-btn" aria-expanded="false" title="Klávesnice">
+            <span class="ico key"></span>
+            <span>Klávesnice</span>
+          </button>
+          <div class="kb-panel" id="kb-panel" hidden>
+            <section class="pad-stack">
+              <div class="key-row f-row" id="fkeys"></div>
+              <div class="key-row num-row" id="numkeys"></div>
+              <div class="key-row cz-row" id="czkeys"></div>
+            </section>
+            <div class="kb-actions">
+              <button type="button" class="pad-btn compact" data-cmd="LC">
+                <span class="ico mouse"></span>
+                <span>LMB</span>
+              </button>
+              <button type="button" class="pad-btn compact" data-cmd="RC">
+                <span class="ico mouse"></span>
+                <span>RMB</span>
+              </button>
+              <button type="button" class="pad-btn compact" data-cmd="ENTER">
+                <span class="ico key"></span>
+                <span>ENTER</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <article class="card mouse-card">
           <div class="row-toggle">
             <div>
@@ -51,38 +77,69 @@
               <span class="slider"></span>
             </label>
           </div>
+          <div class="mouse-btns">
+            <label class="chk"><input type="checkbox" id="mouse-lmb" checked> LMB</label>
+            <label class="chk"><input type="checkbox" id="mouse-rmb" checked> RMB</label>
+          </div>
         </article>
       </div>
 
       <div class="col-mid">
         <article class="card col-card">
-          <h2>Sekvence</h2>
-          <p class="muted tiny seq-hint">0–9 = numpad · +ěščřžýáíé = horní řada (1–9 a 0)</p>
-          <div class="token-insert" id="token-insert"></div>
+          <div class="card-head">
+            <h2>Sekvence</h2>
+            <div class="head-actions">
+              <span class="muted tiny" id="lang-badge"></span>
+            </div>
+          </div>
           <div id="slots" class="slots"></div>
         </article>
       </div>
 
       <div class="col-right">
-        <div class="btn-row">
-          <button type="button" class="pad-btn" data-cmd="LC">
-            <span class="ico mouse"></span>
-            <span>LMB</span>
-          </button>
-          <button type="button" class="pad-btn" data-cmd="RC">
-            <span class="ico mouse"></span>
-            <span>RMB</span>
-          </button>
-        </div>
-        <button type="button" class="pad-btn wide" data-cmd="ENTER">
-          <span class="ico key"></span>
-          <span>ENTER</span>
-        </button>
-
         <article class="card device-card">
           <div class="card-head">
             <h2>Destička</h2>
-            <button type="button" class="ghost-btn" id="health-check">Obnovit</button>
+            <div class="head-actions">
+              <button type="button" class="ghost-btn" id="health-check">Obnovit</button>
+              <button type="button" class="gear-btn" id="help-btn" aria-expanded="false" title="Návod">
+                <span class="ico help"></span>
+              </button>
+              <div class="gear-wrap">
+                <button type="button" class="gear-btn" id="gear-btn" aria-expanded="false" title="Nastavení destičky">
+                  <span class="ico gear"></span>
+                </button>
+                <div class="gear-menu" id="gear-menu" hidden>
+                  <button type="button" class="fw-btn" id="flash-fw">Inicializovat přes USB</button>
+                  <div class="wifi-fold" id="wifi-fold">
+                    <button type="button" class="wifi-fold-btn" id="wifi-fold-btn" aria-expanded="false">
+                      <span id="wifi-fold-label">Síť pro USB init</span>
+                    </button>
+                    <div class="wifi-fold-body">
+                      <div class="wifi-fold-inner">
+                        <label class="field">
+                          <span>Wi-Fi SSID</span>
+                          <input type="text" id="wifi-ssid" maxlength="32" placeholder="název sítě tohoto bytu">
+                        </label>
+                        <label class="field">
+                          <span>Wi-Fi heslo</span>
+                          <input type="password" id="wifi-pass" maxlength="64" placeholder="heslo sítě">
+                        </label>
+                        <label class="field">
+                          <span>IP (PC1 kde běží Klikač)</span>
+                          <input type="text" id="mqtt-host" maxlength="45" placeholder="192.168.x.x" inputmode="decimal">
+                        </label>
+                        <button type="button" class="ghost-btn" id="mqtt-host-fill">Doplnit IP tohoto PC</button>
+                        <p class="muted tiny wifi-warn" id="mqtt-host-warn" hidden></p>
+                        <p class="muted tiny wifi-hint">V nové domácnosti vyplň Wi-Fi tohoto bytu (jen 2,4 GHz) a IP PC, kde běží Klikač. Init jen přes COM na tom PC. Pak odpoj a zapoj HID do herního PC.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <button type="button" class="fw-btn secondary" id="ota-fw">Aktualizovat firmware (Wi-Fi)</button>
+                  <div class="muted tiny" id="fw-log"></div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="status-line">
             <span class="dot" id="esp-dot"></span>
@@ -90,46 +147,26 @@
               <div class="device-name" id="esp-status">MQTT: čekám…</div>
               <div class="mono" id="esp-ip">—</div>
               <div class="muted" id="esp-meta"></div>
-              <div class="muted tiny" id="fw-meta">firmware —</div>
               <div class="muted tiny" id="broker-meta">broker —</div>
             </div>
           </div>
-          <button type="button" class="fw-btn" id="flash-fw">Inicializovat přes USB</button>
-          <div class="wifi-fold" id="wifi-fold">
-            <button type="button" class="wifi-fold-btn" id="wifi-fold-btn" aria-expanded="false">
-              <span id="wifi-fold-label">Síť pro USB init</span>
-            </button>
-            <div class="wifi-fold-body">
-              <div class="wifi-fold-inner">
-                <label class="field">
-                  <span>Wi-Fi SSID</span>
-                  <input type="text" id="wifi-ssid" maxlength="32" placeholder="název sítě tohoto bytu">
-                </label>
-                <label class="field">
-                  <span>Wi-Fi heslo</span>
-                  <input type="password" id="wifi-pass" maxlength="64" placeholder="heslo sítě">
-                </label>
-                <label class="field">
-                  <span>IP Klikače (toto PC)</span>
-                  <input type="text" id="mqtt-host" maxlength="45" placeholder="192.168.x.x" inputmode="decimal">
-                </label>
-                <button type="button" class="ghost-btn" id="mqtt-host-fill">Doplnit IP tohoto PC</button>
-                <p class="muted tiny wifi-warn" id="mqtt-host-warn" hidden></p>
-                <p class="muted tiny wifi-hint">V nové domácnosti vyplň Wi-Fi tohoto bytu (jen 2,4 GHz) a IP PC, kde běží Klikač. Init jen přes COM na tom PC. Pak odpoj a zapoj HID do herního PC.</p>
-              </div>
-            </div>
-          </div>
-          <button type="button" class="fw-btn secondary" id="ota-fw">Aktualizovat firmware (Wi-Fi)</button>
-          <div class="muted tiny" id="fw-log"></div>
         </article>
 
         <article class="card update-card">
           <div class="row-toggle">
             <div>
-              <div class="subhead">Klikač <span id="app-ver"></span></div>
+              <div class="subhead">
+                <button type="button" class="ver-check" id="ver-check" title="Zkontrolovat novou verzi">
+                  Klikač <span id="app-ver"></span>
+                </button>
+                <span id="fw-inline"></span>
+              </div>
               <div class="muted tiny" id="upd-meta">kontrola verze…</div>
             </div>
-            <button type="button" class="fw-btn compact" id="app-update" hidden>Aktualizovat</button>
+            <div class="upd-actions">
+              <button type="button" class="fw-btn compact" id="fw-quick-ota" hidden>Firmware (Wi-Fi)</button>
+              <button type="button" class="fw-btn compact" id="app-update" hidden>Aktualizovat</button>
+            </div>
           </div>
         </article>
       </div>
@@ -138,13 +175,182 @@
     <article class="card log-card">
       <div class="card-head">
         <h2>Protokol</h2>
-        <button type="button" class="ghost-btn" id="clear-log">Promazat log</button>
+        <div class="head-actions">
+          <button type="button" class="ghost-btn" id="copy-log">Kopírovat log</button>
+          <button type="button" class="ghost-btn" id="clear-log">Promazat log</button>
+        </div>
       </div>
       <pre id="proto-log" class="proto-log"></pre>
     </article>
 
     <div class="toast" id="toast" hidden></div>
   </div>
+
+  <div class="help-modal" id="help-modal" hidden>
+    <div class="help-backdrop" id="help-backdrop"></div>
+    <div class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="help-head">
+        <h2 id="help-title">Jak to rozjet</h2>
+        <button type="button" class="gear-btn" id="help-close" title="Zavřít">×</button>
+      </div>
+      <div class="help-body">
+        <div class="help-flow" aria-hidden="true">
+          <div class="help-node">
+            <div class="help-node-kicker">PC1 · ovládání</div>
+            <div class="help-node-title">Klikač</div>
+            <div class="help-node-sub">tato aplikace + MQTT</div>
+          </div>
+          <div class="help-arrow">Wi‑Fi<br>MQTT</div>
+          <div class="help-node">
+            <div class="help-node-kicker">destička</div>
+            <div class="help-node-title">ESP32</div>
+            <div class="help-node-sub">COM jen na init<br>HID do hry</div>
+          </div>
+          <div class="help-arrow">USB<br>HID</div>
+          <div class="help-node">
+            <div class="help-node-kicker">PC2 · herní</div>
+            <div class="help-node-title">Hra</div>
+            <div class="help-node-sub">zařízení USB Input</div>
+          </div>
+        </div>
+
+        <div class="help-steps">
+          <div class="help-step">
+            <span class="help-num">1</span>
+            <div>
+              <b>PC1</b> — nainstaluj Klikač a nech ho běžet. Dole u destičky musí být broker s IP tohoto PC, třeba <code>192.168.0.101:1883</code>. Zavření okna ho jen schová; vypíná se v trayi přes Exit.
+            </div>
+          </div>
+          <div class="help-step">
+            <span class="help-num">2</span>
+            <div>
+              <b>PC1 · první init</b> — ozubené kolečko, vyplň Wi‑Fi bytu <b>jen 2,4 GHz</b> a IP (PC1 kde běží Klikač). Zapoj destičku <b>programovacím USB (COM / CH343)</b> do PC1 a klikni <b>Inicializovat přes USB</b>. Po Hotovo kabel odpoj.
+            </div>
+          </div>
+          <div class="help-step">
+            <span class="help-num">3</span>
+            <div>
+              <b>PC2</b> — stejná Wi‑Fi jako PC1. Klikač sem nedávej. Zapoj destičku <b>native USB (HID / OTG)</b> do herního PC. Windows má ukázat <code>USB Input</code>.
+            </div>
+          </div>
+        </div>
+        <p class="help-after">Na PC1 bude stav destičky na <b>připojena</b> a <b>USB připojeno</b>. Pak lze normálně ovládat z PC1, PC2.</p>
+
+        <h3>Troubleshooting</h3>
+        <div class="help-tips">
+          <div>
+            <b>Destička není na MQTT</b>
+            <span>Stejná Wi‑Fi (ne 5 GHz, ne host), firewall port 1883, znovu USB init s aktuální IP PC1.</span>
+          </div>
+          <div>
+            <b>Klikač se nepřipojuje k brokeru</b>
+            <span>Restartni Klikač na PC1. Port 1883 nesmí držet jiný program.</span>
+          </div>
+          <div>
+            <b>MQTT svítí, ale nic se nepíše</b>
+            <span>V PC2 musí být HID kabel, ne jen COM v PC1. COM umí jen init, ne klávesnici.</span>
+          </div>
+          <div>
+            <b>Windows nevidí USB Input</b>
+            <span>Špatný kabel nebo port. HID je OTG, UART/CH343 klávesnici neudělá.</span>
+          </div>
+          <div>
+            <b>Přenos myši nic nedělá</b>
+            <span>Přepínač zapnutý, zaškrtnuté LMB/RMB, klik mimo okno Klikače.</span>
+          </div>
+          <div>
+            <b>Makro nejde</b>
+            <span>Alespoň jedna sekvence zaškrtnutá. SIMPLE tokeny čárkou: <code>F1,D,2,ě</code> — F1–F12, 0–9, +ěščřžýáíé, LC/RC, ENTER, D / D2 / D900.</span>
+          </div>
+          <div>
+            <b>COMPLEX makro se nespustí</b>
+            <span>Otevři <b>editor V2</b> a dej <b>✓ VALIDOVAT MAKRO</b> — makro s chybou se schválně nespustí. Chyba v seznamu je klikací a skočí na místo v programu.</span>
+          </div>
+          <div>
+            <b>Nová domácnost / jiná IP</b>
+            <span>V kolečku nová Wi‑Fi a IP, init znovu přes COM na PC1. Pak zase HID do PC2. Když log ukáže <code>nvs-set 0/0/0</code> a <code>abort</code>, Klikač musí nahrát nový firmware (ne jen Wi‑Fi) a init zopakovat.</span>
+          </div>
+          <div>
+            <b>Firmware nižší než Klikač</b>
+            <span>Destička online → Aktualizovat firmware (Wi‑Fi). Kabely u PC2 neměň.</span>
+          </div>
+          <div>
+            <b>Firewall na PC1 (správcovský PowerShell)</b>
+            <span>když destička broker nevidí:</span>
+            <code>netsh advfirewall firewall add rule name="Klikac MQTT" dir=in action=allow protocol=TCP localport=1883 profile=any</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="macro-modal" id="macro-modal" hidden>
+    <div class="macro-backdrop" id="macro-backdrop"></div>
+    <div class="macro-dialog" role="dialog" aria-modal="true" aria-labelledby="macro-title">
+      <div class="macro-head">
+        <div class="macro-head-main">
+          <span class="macro-slot-no" id="macro-slot-no">1</span>
+          <label class="macro-name-field">
+            <span id="macro-title">Makro</span>
+            <input type="text" id="macro-name" maxlength="40" placeholder="název makra">
+          </label>
+          <div class="seg" id="macro-type" role="group" aria-label="Typ makra">
+            <button type="button" data-type="SIMPLE">SIMPLE</button>
+            <button type="button" data-type="COMPLEX">COMPLEX</button>
+          </div>
+        </div>
+        <div class="macro-head-actions">
+          <div class="seg" id="macro-mode" role="group" aria-label="Režim editoru">
+            <button type="button" data-mode="visual">VIZUÁLNĚ</button>
+            <button type="button" data-mode="code">KÓD</button>
+          </div>
+          <button type="button" class="gear-btn" id="macro-close" title="Zavřít">×</button>
+        </div>
+      </div>
+
+      <div class="macro-body">
+        <div class="macro-main">
+          <div class="macro-simple" id="macro-simple" hidden>
+            <label class="field">
+              <span>Sekvence (tokeny oddělené čárkou)</span>
+              <textarea id="macro-simple-seq" rows="4" maxlength="768" placeholder="např. F1,D3,F2,D5"></textarea>
+            </label>
+            <p class="muted tiny">
+              Simple makro se opakuje dokola. <code>F1</code>–<code>F12</code>, <code>0</code>–<code>9</code>,
+              <code>+ěščřžýáíé</code>, <code>LC</code>/<code>RC</code>, <code>ENTER</code>,
+              <code>D</code> (náhodná prodleva), <code>D3</code> (3 s + prodleva).
+            </p>
+            <div class="macro-simple-preview" id="macro-simple-preview"></div>
+          </div>
+          <div class="macro-visual" id="macro-visual"></div>
+          <textarea class="macro-code" id="macro-code" spellcheck="false" hidden></textarea>
+        </div>
+        <aside class="macro-side" id="macro-side">
+          <div class="macro-side-head">KONSTRUKCE</div>
+          <div class="macro-palette" id="macro-palette"></div>
+          <div class="macro-side-head">NÁPOVĚDA</div>
+          <div class="macro-help" id="macro-help"></div>
+        </aside>
+      </div>
+
+      <div class="macro-foot">
+        <button type="button" class="validate-btn" id="macro-validate">✓ VALIDOVAT MAKRO</button>
+        <div class="macro-status" id="macro-status">Stav: nevalidováno</div>
+        <div class="macro-issues" id="macro-issues"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/macro/keymap.js"></script>
+  <script src="../lib/macro/ast.js"></script>
+  <script src="../lib/macro/lexer.js"></script>
+  <script src="../lib/macro/parser.js"></script>
+  <script src="../lib/macro/simpleParser.js"></script>
+  <script src="../lib/macro/serialize.js"></script>
+  <script src="../lib/macro/compiler.js"></script>
+  <script src="../lib/macro/validator.js"></script>
+  <script src="../lib/macro/runtime.js"></script>
+  <script src="../lib/macro/help.js"></script>
+  <script src="macroEditor.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

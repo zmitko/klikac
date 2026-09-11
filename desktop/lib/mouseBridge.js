@@ -14,6 +14,8 @@ class MouseBridge {
     this.lastClickAt = 0;
     this.hookPid = 0;
     this.lastError = "";
+    this.allowLmb = true;
+    this.allowRmb = true;
   }
 
   status() {
@@ -26,7 +28,19 @@ class MouseBridge {
       lastClickAt: this.lastClickAt,
       lastError: this.lastError,
       mode: "global",
+      allowLmb: this.allowLmb,
+      allowRmb: this.allowRmb,
     };
+  }
+
+  setButtons({ lmb, rmb }) {
+    if (lmb !== undefined) {
+      this.allowLmb = !!lmb;
+    }
+    if (rmb !== undefined) {
+      this.allowRmb = !!rmb;
+    }
+    return this.status();
   }
 
   setEnabled(on) {
@@ -123,6 +137,12 @@ class MouseBridge {
     this.buf = parts.pop();
     for (const line of parts) {
       const token = line.trim();
+      if (token === "LC" && !this.allowLmb) {
+        continue;
+      }
+      if (token === "RC" && !this.allowRmb) {
+        continue;
+      }
       if (token !== "LC" && token !== "RC") {
         continue;
       }
@@ -155,6 +175,9 @@ class MouseBridge {
       return { ok: false, reason: "mouse_bridge_off" };
     }
     const payload = button === "right" || button === "RC" || button === "RMB" ? "RC" : "LC";
+    if ((payload === "LC" && !this.allowLmb) || (payload === "RC" && !this.allowRmb)) {
+      return { ok: false, reason: "mouse_button_off" };
+    }
     this.lastClick = payload;
     this.lastClickAt = Date.now();
     this.onClick(payload);

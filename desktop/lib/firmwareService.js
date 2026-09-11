@@ -61,13 +61,13 @@ class FirmwareService {
 
   bundledFile(name) {
     const roots = [];
+    roots.push(path.join(__dirname, "..", "..", ".pio", "build", "esp32-s3-n16r8"));
     if (process.resourcesPath) {
       roots.push(path.join(process.resourcesPath, "firmware"));
       roots.push(path.join(process.resourcesPath, "tools"));
     }
     roots.push(path.join(__dirname, "..", "firmware"));
     roots.push(path.join(__dirname, "..", "tools"));
-    roots.push(path.join(__dirname, "..", "..", ".pio", "build", "esp32-s3-n16r8"));
     for (const root of roots) {
       const full = path.join(root, name);
       if (fs.existsSync(full)) {
@@ -161,7 +161,7 @@ class FirmwareService {
         throw new Error("Vyplň Wi-Fi SSID před USB inicializací.");
       }
       if (!mqttHost) {
-        throw new Error("Vyplň IP Klikače (tohoto PC) pod tlačítkem.");
+        throw new Error("Vyplň IP (PC1 kde běží Klikač) pod tlačítkem.");
       }
       const ports = await listSerialPorts();
       this.state.ports = ports;

@@ -28,7 +28,7 @@
 #define OTA_UDP_PORT 3232
 #define HTTP_OTA_URL_MAX 512
 
-#define MACRO_SEQ_MAX 384
+#define MACRO_SEQ_MAX 768
 #define MACRO_SLOTS 5
 #define MACRO_START_MAX 2048
 

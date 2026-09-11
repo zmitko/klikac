@@ -92,8 +92,9 @@ Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat fir
 
 ## Co umí aplikace
 
-- F1–F8, numpad 0–9, horní řada +ěščřžýáíé, LMB, RMB, Enter
+- F1–F12, numpad 0–9, horní řada +ěščřžýáíé, LMB, RMB, Enter
 - až 5 sekvencí, náhodné prodlevy D min / D max, smyčka
+- makra **SIMPLE** (tokeny) nebo **COMPLEX** (jazyk V2 s cykly, podmínkami a proměnnými)
 - přenos kliků myši z PC1 na PC2 (mimo okno Klikače)
 - protokol MQTT / USB
 - **Inicializovat přes USB** — první nahrání + Wi‑Fi
@@ -101,20 +102,78 @@ Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat fir
 
 ## Makra
 
-Tokeny v sekvenci (čárkou):
+Každá z pěti sekvencí má od verze 1.1.0 **typ**:
+
+| Typ | Zápis | Kde běží |
+| --- | --- | --- |
+| **SIMPLE** | `F1,D3,F2,D5` | na destičce (jako v 1.0.x) |
+| **COMPLEX** | jazyk V2 — cykly, podmínky, proměnné | v Klikači, klávesy jdou na destičku po jedné |
+
+Makro uložené starší verzí typ nemá a bere se jako SIMPLE, takže nic nepřestane fungovat.
+Přepínač `SIMPLE / COMPLEX` je u každé sekvence.
+
+### SIMPLE
+
+Tokeny oddělené čárkou. Makro se opakuje dokola.
 
 | Token | Význam |
 | --- | --- |
-| `F1` … `F8` | F-klávesa |
+| `F1` … `F12` | F-klávesa |
 | `0` … `9` | numerická klávesnice (numpad) |
 | `+ěščřžýáíé` | horní řada (stejné klávesy jako 1–9 a 0) |
 | `LC` / `RC` | levé / pravé tlačítko myši |
 | `ENTER` | Enter |
 | `D` | pauza v rozsahu D min–D max |
-| `D900` | pauza 900 ms |
-| `D2` | pauza 2 s |
+| `D2` | 2 s + pauza z rozsahu |
+| `D900` | 900 s + pauza z rozsahu |
 
 Příklad: `F1,D2,2,ě,D`
+
+### COMPLEX — jazyk V2
+
+**Otevřít editor V2** u sekvence otevře editor: vlevo se program skládá z bloků,
+vpravo je seznam konstrukcí s nápovědou, dole **✓ VALIDOVAT MAKRO**.
+Přepínač `VIZUÁLNĚ / KÓD` ukáže stejný program jako text. Spustit se dá jen makro,
+které projde validací a kompilací.
+
+```text
+NASTAV POCET = 0
+
+DOKOLA
+    STISK F1
+    CEKEJ NAHODNE 2s-5s
+    ZVYS POCET O 1
+
+    POKUD POCET >= 10
+        SPUST REBUFF
+        NASTAV POCET = 0
+    KONEC
+KONEC
+```
+
+| Konstrukce | Zápis |
+| --- | --- |
+| stisk | `STISK F1` |
+| čekání | `CEKEJ 500ms` · `CEKEJ 3s` · `CEKEJ 2min` · `CEKEJ 1h` |
+| náhodné čekání | `CEKEJ NAHODNE 2s-5s` |
+| čekání do času | `CEKEJ DO 18:00` |
+| cykly | `OPAKUJ 5x` · `DOKOLA` · `PO DOBU 30s` · `KAZDYCH 10s` |
+| podmínka | `POKUD POCET >= 5` … `JINAK` … `KONEC` |
+| operátory | `= != > < >= <=`, spojky `A`, `NEBO`, `NE` |
+| proměnné | `NASTAV X = 0` · `ZVYS X O 1` · `SNIZ X O 2` |
+| náhoda | `NASTAV X = NAHODNE 1-100` · blok `NAHODNE` / `NEBO` / `70%:` |
+| makra | `MAKRO M1(POCET)` … `KONEC` · `SPUST M1(5)` |
+| řízení | `BREAK` · `CONTINUE` · `STOP` |
+| čas | `TED` · `CAS` · `UPLYNULO START` |
+| ladění | `VYPIS "text"` · `VYPIS POCET` · `# komentář` |
+
+Bloky se zavírají slovem `KONEC`, velikost písmen nehraje roli a odsazení je jen
+pro čitelnost. `VYPIS` píše do **Protokolu**.
+
+V2 je schválně **slepé** — nečte obrazovku, pixely, aktivní okno ani stisky
+uživatele. Rozhoduje se jen podle vlastních proměnných, čítačů, času, náhody a
+parametrů. Rekurzi maker (`M1 → M2 → M1`) validace zamítne a runtime má navíc
+limit hloubky volání.
 
 ## MQTT (interní síť)
 
@@ -124,7 +183,7 @@ Přihlášení je v kódu napevno (`klikac` / `klikac`) — počítá se s tím,
 
 | Topic | Směr | Účel |
 | --- | --- | --- |
-| `esp32kbd/command` | app → destička | `F1`–`F8`, `0`–`9`, `+ěščřžýáíé`, `ENTER`, `LC`, `RC` |
+| `esp32kbd/command` | app → destička | `F1`–`F12`, `0`–`9`, `+ěščřžýáíé`, `ENTER`, `LC`, `RC` |
 | `esp32kbd/macro` | app → destička | start/stop sekvence |
 | `esp32kbd/status` | destička | `online` / `offline` |
 | `esp32kbd/usb` | destička | HID připojeno |
@@ -141,20 +200,29 @@ Přihlášení je v kódu napevno (`klikac` / `klikac`) — počítá se s tím,
 
 ## Vývoj
 
-Verze je v souboru [`VERSION`](VERSION) (teď `1.0.0`). Tag `v1.0.1` spustí GitHub Actions — NSIS instalátor + firmware. Wi‑Fi se do binárky nepeče.
+Verze je v souboru [`VERSION`](VERSION) (teď `1.1.0`). Tag `v1.1.1` spustí GitHub Actions — NSIS instalátor + firmware. Wi‑Fi se do binárky nepeče.
 
 ```text
-desktop/     Klikač (Electron)
-src/         firmware
-include/     config + secrets (prázdné, Wi-Fi jde z appky)
-ha/          starý Home Assistant PoC, k provozu se nepoužívá
+desktop/            Klikač (Electron)
+desktop/lib/macro/  jazyk V2: parser -> AST -> validator -> compiler -> runtime
+desktop/test/       testy makro vrstvy (node --test)
+src/                firmware
+include/            config + secrets (prázdné, Wi-Fi jde z appky)
+ha/                 starý Home Assistant PoC, k provozu se nepoužívá
 ```
 
 ```bat
 cd desktop
 npm install
 start.cmd
+npm test
 ```
+
+Makro vrstva je bez závislostí a stejné soubory používá main proces, renderer
+(jako `<script>`) i testy. Simple i Complex makra jdou přes jeden model:
+`parser → AST → validátor → compiler → IR`. Complex IR běží ve VM v aplikaci
+a mačká přes `esp32kbd/command`, Simple se kompiluje do původního payloadu
+`loop|dmin|dmax|seq` a jede dál na destičce.
 
 Firmware (Windows: projekt na UNC disku spusť přes `pushd`, jinak PlatformIO spadne):
 
