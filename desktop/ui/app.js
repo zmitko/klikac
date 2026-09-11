@@ -124,7 +124,7 @@ function apply(snap) {
       ? "Klikač se nepřipojuje k brokeru"
       : live
         ? "Destička připojena"
-        : "Destička offline";
+        : "Destička není na MQTT";
   const healthBtn = $("health-check");
   if (healthBtn) {
     healthBtn.disabled = checking;

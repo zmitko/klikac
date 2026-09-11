@@ -625,6 +625,8 @@ static void mqtt_disconnect_cleanup() {
     mqtt_ready_at = 0;
 }
 
+static void wifi_begin_now(const char *why);
+
 static void cfg_save() {
     prefs.begin("klikac", false);
     prefs.putString("wifi", wifi_ssid);
@@ -689,9 +691,9 @@ static void cfg_handle_line(char *line) {
             mqtt.disconnect();
             mqtt_disconnect_cleanup();
         }
+        wifi_start_at = 0;
         if (wifi_ssid[0]) {
-            WiFi.disconnect();
-            WiFi.begin(wifi_ssid, wifi_pass);
+            wifi_begin_now("apply");
         }
     }
 }
@@ -790,8 +792,16 @@ static void wifi_begin_now(const char *why) {
     Serial.print(why);
     Serial.print(" ");
     Serial.println(wifi_ssid);
-    WiFi.disconnect(false, false);
-    delay(50);
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(OTA_HOSTNAME);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
+    WiFi.setTxPower(WIFI_POWER_17dBm);
+    if (wifi_begin_at) {
+        WiFi.disconnect(false, false);
+        delay(50);
+    }
     WiFi.begin(wifi_ssid, wifi_pass);
     wifi_begin_at = millis();
     last_wifi_attempt = wifi_begin_at;
@@ -799,10 +809,6 @@ static void wifi_begin_now(const char *why) {
 
 static void wifi_mqtt_loop() {
     const uint32_t now = millis();
-    if (wifi_start_at && now < wifi_start_at) {
-        return;
-    }
-    wifi_start_at = 0;
 
     if (WiFi.status() != WL_CONNECTED) {
         wifi_ok_since = 0;
@@ -818,10 +824,21 @@ static void wifi_mqtt_loop() {
         if (!wifi_ssid[0]) {
             return;
         }
-        if (wifi_begin_at && (now - wifi_begin_at) < WIFI_GIVEUP_MS) {
+        if (!wifi_begin_at) {
+            if (usb_mounted || !wifi_start_at || now >= wifi_start_at) {
+                wifi_begin_now("start");
+            }
             return;
         }
-        wifi_begin_now(wifi_begin_at ? "reconnect" : "start");
+        if ((now - wifi_begin_at) < WIFI_GIVEUP_MS) {
+            if (now - last_wifi_attempt >= 5000) {
+                last_wifi_attempt = now;
+                Serial.print("KLOG wifi-sta=");
+                Serial.println((int)WiFi.status());
+            }
+            return;
+        }
+        wifi_begin_now("reconnect");
         return;
     }
 
@@ -892,10 +909,6 @@ void setup() {
 
     snprintf(mqtt_client_id, sizeof(mqtt_client_id), MQTT_CLIENT_ID_PREFIX "%04X", (uint16_t)(ESP.getEfuseMac() & 0xFFFF));
 
-    WiFi.mode(WIFI_STA);
-    WiFi.setHostname(OTA_HOSTNAME);
-    WiFi.setAutoReconnect(true);
-    WiFi.persistent(false);
     wifi_start_at = millis() + WIFI_START_DELAY_MS;
     last_wifi_attempt = 0;
     wifi_begin_at = 0;
@@ -922,6 +935,9 @@ void loop() {
 
     if (usb_announce) {
         usb_announce = false;
+        if (wifi_ssid[0] && WiFi.status() != WL_CONNECTED && !wifi_begin_at) {
+            wifi_begin_now("usb");
+        }
         if (mqtt.connected()) {
             mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
             publish_usb();
