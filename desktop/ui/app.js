@@ -116,12 +116,20 @@ function apply(snap) {
   const mqttOk = device.mqtt === "connected";
   const live = !!device.live;
   const usbOk = device.usb === "connected";
-  $("esp-dot").className = `dot ${mqttOk && live ? "on" : mqttOk ? "warn" : ""}`;
-  $("esp-status").textContent = !mqttOk
-    ? "Klikač se nepřipojuje k brokeru"
-    : live
-      ? "Destička připojena"
-      : "Destička offline";
+  const checking = device.health === "checking";
+  $("esp-dot").className = `dot ${checking ? "warn" : mqttOk && live ? "on" : mqttOk ? "warn" : ""}`;
+  $("esp-status").textContent = checking
+    ? "Kontroluji…"
+    : !mqttOk
+      ? "Klikač se nepřipojuje k brokeru"
+      : live
+        ? "Destička připojena"
+        : "Destička offline";
+  const healthBtn = $("health-check");
+  if (healthBtn) {
+    healthBtn.disabled = checking;
+    healthBtn.textContent = checking ? "…" : "Obnovit";
+  }
   $("esp-ip").textContent = device.ip || "—";
   const bits = [
     mqttOk ? "MQTT OK" : "MQTT —",
@@ -285,6 +293,27 @@ $("app-update").addEventListener("click", async () => {
     await window.ovladac.installUpdate();
   } catch (err) {
     toast(err.message);
+  }
+});
+
+$("health-check").addEventListener("click", async () => {
+  $("health-check").disabled = true;
+  $("esp-status").textContent = "Kontroluji…";
+  try {
+    const snap = await window.ovladac.healthCheck();
+    apply(snap);
+    const device = snap.device || {};
+    const net = snap.net || {};
+    if (device.health === "ok") {
+      toast("Destička živá");
+    } else if ((net.clients || 0) >= 2) {
+      toast("Na brokeru je klient, ping bez odpovědi");
+    } else {
+      toast("Destička neodpověděla");
+    }
+  } catch (err) {
+    toast(err.message);
+    apply(await window.ovladac.getState());
   }
 });
 

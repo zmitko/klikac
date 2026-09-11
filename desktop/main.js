@@ -169,6 +169,13 @@ function bindIpc() {
     });
   });
   ipcMain.handle("ota-firmware", async () => firmware.ota());
+  ipcMain.handle("health-check", async () => {
+    if (broker) {
+      broker.refreshLan();
+    }
+    const snap = await core.healthCheck();
+    return attachSnap(snap);
+  });
 }
 
 const gotLock = app.requestSingleInstanceLock();

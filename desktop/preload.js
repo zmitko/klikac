@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("ovladac", {
   installUpdate: () => ipcRenderer.invoke("install-update"),
   flashFirmware: () => ipcRenderer.invoke("flash-firmware"),
   otaFirmware: () => ipcRenderer.invoke("ota-firmware"),
+  healthCheck: () => ipcRenderer.invoke("health-check"),
   onState: (handler) => {
     ipcRenderer.on("state", (_event, snap) => handler(snap));
   },

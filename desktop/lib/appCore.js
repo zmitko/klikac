@@ -109,6 +109,12 @@ class AppCore {
     }
   }
 
+  async healthCheck() {
+    await this.mqtt.ping();
+    this.emit();
+    return this.snapshot();
+  }
+
   mouseClick(button) {
     const result = this.mouse.handlePageClick(button);
     if (!result.ok) {

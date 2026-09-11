@@ -27,6 +27,8 @@ class MqttBridge {
       lastLiveAt: 0,
       fw: "",
       otaStatus: "",
+      health: "",
+      healthAt: 0,
     };
   }
 
@@ -143,6 +145,37 @@ class MqttBridge {
     }
     const text = String(payload);
     this.client.publish(topic, text, { qos: 0, retain: false });
+  }
+
+  async ping(timeoutMs = 1800) {
+    this.device.health = "checking";
+    this.device.healthAt = Date.now();
+    this.emit();
+    if (!this.isReady()) {
+      this.device.health = "timeout";
+      this.log("healthcheck: MQTT broker není připojený");
+      this.emit();
+      return this.snapshot();
+    }
+    const startedAckAt = this.device.ackAt;
+    this.publish(TOPIC_COMMAND, "PING");
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 80));
+      if (this.device.ackAt > startedAckAt && this.device.ack === "PONG") {
+        this.device.health = "ok";
+        this.device.healthAt = Date.now();
+        this.touchLive();
+        this.log("healthcheck: destička PONG");
+        this.emit();
+        return this.snapshot();
+      }
+    }
+    this.device.health = "timeout";
+    this.device.healthAt = Date.now();
+    this.log("healthcheck: destička neodpověděla");
+    this.emit();
+    return this.snapshot();
   }
 }
 

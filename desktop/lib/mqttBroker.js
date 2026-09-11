@@ -28,6 +28,11 @@ class MqttBroker {
     };
   }
 
+  refreshLan() {
+    this.lanIp = lanIPv4();
+    return this.snapshot();
+  }
+
   async start() {
     this.lanIp = lanIPv4();
     this.broker = await Aedes.createBroker({

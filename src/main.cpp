@@ -578,6 +578,16 @@ static void mqtt_callback(char *topic, byte *payload, unsigned int len) {
         return;
     }
 
+    if (strcmp(buf, "PING") == 0 || strcmp(buf, "HB") == 0) {
+        mqtt.publish(MQTT_TOPIC_ACK, "PONG", false);
+        mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+        publish_usb();
+        publish_ip();
+        publish_fw();
+        Serial.println("PING");
+        return;
+    }
+
     if (millis() < mqtt_ready_at) {
         Serial.println("command ignored: mqtt settle");
         return;
