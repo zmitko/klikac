@@ -161,35 +161,47 @@ class FirmwareService {
         throw new Error("Vyplň Wi-Fi SSID před USB inicializací.");
       }
       if (!mqttHost) {
-        throw new Error("Neznám IP tohoto PC. Připoj PC1 na LAN.");
+        throw new Error("Vyplň IP Klikače (tohoto PC) pod tlačítkem.");
       }
-      const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
-      const usbImage = elf || factoryBin || firmwareBin;
-      this.setLog(`Nahrávám ${path.basename(usbImage)}${version ? ` ${version}` : ""}`);
       const ports = await listSerialPorts();
       this.state.ports = ports;
       const port = pickFlashPort(ports);
       if (!port) {
         throw new Error("Flash kabel (CH343/COM) na tomhle PC není. USB init dělej na PC1 s programovacím USB.");
       }
-      this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
-      await this.flashUsb({
-        port: port.path,
-        image: usbImage,
-      });
-      this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
-      this.state.status = "uploading";
-      await new Promise((r) => setTimeout(r, 3500));
-      await provisionSerial({
+      const sendCfg = () => provisionSerial({
         port: port.path,
         wifiSsid,
         wifiPassword,
         mqttHost,
         onLine: (line) => this.setLog(line),
       });
+      this.state.status = "uploading";
+      this.setLog(`COM ${port.path}. Posílám Wi-Fi a IP ${mqttHost} (bez flashe)…`);
+      try {
+        await sendCfg();
+      } catch (provErr) {
+        if (provErr.code !== "NO_BANNER") {
+          throw provErr;
+        }
+        this.setLog("Na destičce není firmware, nahrávám…");
+        this.state.status = "preparing";
+        const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
+        const usbImage = elf || factoryBin || firmwareBin;
+        this.setLog(`Nahrávám ${path.basename(usbImage)}${version ? ` ${version}` : ""}`);
+        this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
+        await this.flashUsb({
+          port: port.path,
+          image: usbImage,
+        });
+        this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
+        this.state.status = "uploading";
+        await new Promise((r) => setTimeout(r, 3500));
+        await sendCfg();
+      }
       this.state.status = "ok";
       this.state.progress = 1;
-      this.setLog(`Hotovo. MQTT broker ${mqttHost}:1883. Přepoj destičku USB do PC2.`);
+      this.setLog(`Hotovo. MQTT broker ${mqttHost}:1883. Odpoj COM a zapoj HID USB do herního PC.`);
       return this.snapshot();
     } catch (err) {
       this.state.error = err.message;

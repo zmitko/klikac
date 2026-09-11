@@ -47,6 +47,37 @@ function Get-LanIPv4 {
     return "192.168.1.109"
 }
 
+function Prepare-OutDir {
+    param([string]$Path)
+    try {
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+        foreach ($sub in @("firmware", "tools")) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $Path $sub) | Out-Null
+        }
+        $probe = Join-Path $Path "firmware\.write-test"
+        [System.IO.File]::WriteAllText($probe, "ok")
+        Remove-Item $probe -Force
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-OutDir {
+    $candidates = @(
+        (Join-Path $RepoRoot "dist\esp32-flash-$Version"),
+        (Join-Path $env:TEMP "klikac-esp32-flash-$Version"),
+        (Join-Path $env:USERPROFILE "Desktop\klikac-esp32-flash-$Version")
+    )
+    foreach ($dir in $candidates) {
+        if (Prepare-OutDir $dir) {
+            return $dir
+        }
+        Write-Host "Nelze pouzit $dir"
+    }
+    throw "Nemuzu zapisovat balicek. Zavri zamcenou slozku dist\esp32-flash a spust znovu."
+}
+
 function Get-ReleaseFirmware {
     $fwDir = Join-Path $CacheDir "release-$Version"
     New-Item -ItemType Directory -Force -Path $fwDir | Out-Null
@@ -120,11 +151,7 @@ if (-not $esptoolExe) {
     throw "V archivu esptool.exe neni."
 }
 
-if (Test-Path $OutDir) {
-    Remove-Item $OutDir -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "firmware") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "tools") | Out-Null
+$OutDir = Resolve-OutDir
 
 if ($haveFour) {
     Copy-Item $firmwareSrc (Join-Path $OutDir "firmware\firmware.bin")
@@ -183,11 +210,30 @@ $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
     "  drz BOOT, kratce stiskni RESET, pust BOOT, spust znovu."
 ) | Set-Content -Path (Join-Path $OutDir "CTI_ME.txt") -Encoding UTF8
 
-$zipOut = Join-Path $RepoRoot "dist\esp32-flash.zip"
-if (Test-Path $zipOut) {
-    Remove-Item $zipOut -Force
+$zipCandidates = @(
+    (Join-Path $RepoRoot "dist\esp32-flash.zip"),
+    (Join-Path $RepoRoot "dist\esp32-flash-$Version.zip"),
+    (Join-Path $env:TEMP "klikac-esp32-flash-$Version.zip"),
+    (Join-Path $env:USERPROFILE "Desktop\klikac-esp32-flash-$Version.zip")
+)
+$zipOut = $null
+foreach ($zipTry in $zipCandidates) {
+    try {
+        $zipParent = Split-Path $zipTry -Parent
+        New-Item -ItemType Directory -Force -Path $zipParent | Out-Null
+        if (Test-Path $zipTry) {
+            Remove-Item $zipTry -Force
+        }
+        Compress-Archive -Path (Join-Path $OutDir "*") -DestinationPath $zipTry -CompressionLevel Fastest
+        $zipOut = $zipTry
+        break
+    } catch {
+        Write-Host "ZIP $zipTry nejde: $($_.Exception.Message)"
+    }
 }
-Compress-Archive -Path $OutDir -DestinationPath $zipOut -CompressionLevel Fastest
+if (-not $zipOut) {
+    throw "Slozka je hotova ($OutDir), ale ZIP se nepodarilo ulozit. Zkopiruj tu slozku rucne."
+}
 
 Write-Host ""
 Write-Host "Balicek je hotovy:"

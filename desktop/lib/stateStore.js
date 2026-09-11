@@ -11,6 +11,7 @@ const DEFAULT_STATE = {
   mouseBridge: false,
   wifiSsid: "",
   wifiPassword: "",
+  mqttHost: "",
   slots: [
     { name: "AFK ASSIST", seq: "F1,D2,F2,D,F5,D", enabled: true },
     { name: "REBUFF", seq: "F3,D,F7,D900", enabled: true },
@@ -85,6 +86,7 @@ class StateStore {
     next.mouseBridge = !!next.mouseBridge;
     next.wifiSsid = String(next.wifiSsid || "").slice(0, 32);
     next.wifiPassword = String(next.wifiPassword || "").slice(0, 64);
+    next.mqttHost = String(next.mqttHost || "").trim().slice(0, 45);
     next.delayMin = clampDelay(next.delayMin, 200);
     next.delayMax = clampDelay(next.delayMax, 800);
     if (next.delayMax < next.delayMin) {

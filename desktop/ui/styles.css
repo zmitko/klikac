@@ -222,6 +222,19 @@ h2 {
   overflow: hidden;
 }
 
+.wifi-fold-inner .ghost-btn {
+  margin: 2px 0 6px;
+}
+
+.wifi-hint {
+  margin: 0 0 4px;
+}
+
+.wifi-warn {
+  margin: 0 0 6px;
+  color: #b45309;
+}
+
 .fw-btn.secondary {
   margin-top: 6px;
   background: #eceff1;

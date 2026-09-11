@@ -95,18 +95,25 @@
           <button type="button" class="fw-btn" id="flash-fw">Inicializovat přes USB</button>
           <div class="wifi-fold" id="wifi-fold">
             <button type="button" class="wifi-fold-btn" id="wifi-fold-btn" aria-expanded="false">
-              <span id="wifi-fold-label">Wi-Fi pro USB init</span>
+              <span id="wifi-fold-label">Síť pro USB init</span>
             </button>
             <div class="wifi-fold-body">
               <div class="wifi-fold-inner">
                 <label class="field">
                   <span>Wi-Fi SSID</span>
-                  <input type="text" id="wifi-ssid" maxlength="32" placeholder="název sítě">
+                  <input type="text" id="wifi-ssid" maxlength="32" placeholder="název sítě tohoto bytu">
                 </label>
                 <label class="field">
                   <span>Wi-Fi heslo</span>
                   <input type="password" id="wifi-pass" maxlength="64" placeholder="heslo sítě">
                 </label>
+                <label class="field">
+                  <span>IP Klikače (toto PC)</span>
+                  <input type="text" id="mqtt-host" maxlength="45" placeholder="192.168.x.x" inputmode="decimal">
+                </label>
+                <button type="button" class="ghost-btn" id="mqtt-host-fill">Doplnit IP tohoto PC</button>
+                <p class="muted tiny wifi-warn" id="mqtt-host-warn" hidden></p>
+                <p class="muted tiny wifi-hint">V nové domácnosti vyplň Wi-Fi tohoto bytu (jen 2,4 GHz) a IP PC, kde běží Klikač. Init jen přes COM na tom PC. Pak odpoj a zapoj HID do herního PC.</p>
               </div>
             </div>
           </div>

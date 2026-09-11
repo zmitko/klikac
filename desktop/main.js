@@ -176,7 +176,7 @@ function bindIpc() {
     return firmware.flash({
       wifiSsid: ui.wifiSsid,
       wifiPassword: ui.wifiPassword,
-      mqttHost: lanIPv4(),
+      mqttHost: String(ui.mqttHost || "").trim() || lanIPv4(),
     });
   });
   ipcMain.handle("ota-firmware", async () => firmware.ota());

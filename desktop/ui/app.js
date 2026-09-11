@@ -80,9 +80,22 @@ function apply(snap) {
   if (document.activeElement !== $("wifi-pass")) {
     $("wifi-pass").value = ui.wifiPassword || "";
   }
+  const lanIp = (snap.net && snap.net.lanIp) || "";
+  if (document.activeElement !== $("mqtt-host")) {
+    $("mqtt-host").value = ui.mqttHost || lanIp || "";
+  }
+  const hostLabel = ($("mqtt-host").value || "").trim();
+  const warn = $("mqtt-host-warn");
+  if (warn) {
+    const mismatch = hostLabel && lanIp && hostLabel !== lanIp;
+    warn.hidden = !mismatch;
+    warn.textContent = mismatch
+      ? `Toto PC má teď ${lanIp}. V jiné síti doplň tu IP a znovu inicializuj přes USB.`
+      : "";
+  }
   $("wifi-fold-label").textContent = ui.wifiSsid
-    ? `Wi-Fi pro USB init · ${ui.wifiSsid}`
-    : "Wi-Fi pro USB init";
+    ? (hostLabel ? `Síť pro USB init · ${ui.wifiSsid} · ${hostLabel}` : `Síť pro USB init · ${ui.wifiSsid}`)
+    : "Síť pro USB init";
   const mouse = snap.mouse || {};
   if (!ui.mouseBridge) {
     $("mouse-meta").textContent = "vypnuto";
@@ -202,6 +215,7 @@ function collectUiPatch() {
     mouseBridge: $("mouse-bridge").checked,
     wifiSsid: $("wifi-ssid").value,
     wifiPassword: $("wifi-pass").value,
+    mqttHost: $("mqtt-host").value.trim(),
     slots,
   };
 }
@@ -232,8 +246,24 @@ $("wifi-fold-btn").addEventListener("click", () => {
 });
 $("wifi-ssid").addEventListener("input", scheduleSave);
 $("wifi-pass").addEventListener("input", scheduleSave);
+$("mqtt-host").addEventListener("input", scheduleSave);
 $("wifi-ssid").addEventListener("change", scheduleSave);
 $("wifi-pass").addEventListener("change", scheduleSave);
+$("mqtt-host").addEventListener("change", scheduleSave);
+$("mqtt-host-fill").addEventListener("click", async () => {
+  try {
+    const snap = await window.ovladac.getState();
+    const ip = (snap.net && snap.net.lanIp) || "";
+    if (!ip) {
+      toast("Toto PC nemá LAN IP. Připoj ho na Wi-Fi nebo kabel.");
+      return;
+    }
+    $("mqtt-host").value = ip;
+    scheduleSave();
+  } catch (err) {
+    toast(err.message);
+  }
+});
 $("delay-min").addEventListener("input", () => {
   $("dmin-val").textContent = $("delay-min").value;
 });
@@ -260,16 +290,25 @@ $("flash-fw").addEventListener("click", async () => {
   $("flash-fw").disabled = true;
   try {
     apply(await window.ovladac.setState(collectUiPatch()));
-    if (!$("wifi-ssid").value.trim()) {
+    const ssid = $("wifi-ssid").value.trim();
+    const mqttHost = $("mqtt-host").value.trim();
+    if (!ssid || !mqttHost) {
       $("wifi-fold").classList.add("open");
       $("wifi-fold-btn").setAttribute("aria-expanded", "true");
       $("flash-fw").disabled = false;
-      toast("Nejdřív vyplň Wi-Fi pod tlačítkem.");
+      toast(!ssid ? "Nejdřív vyplň Wi-Fi pod tlačítkem." : "Vyplň IP Klikače (tohoto PC).");
+      return;
+    }
+    if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(mqttHost)) {
+      $("wifi-fold").classList.add("open");
+      $("wifi-fold-btn").setAttribute("aria-expanded", "true");
+      $("flash-fw").disabled = false;
+      toast("IP Klikače musí být IPv4, třeba 192.168.0.101.");
       return;
     }
     const snap = await window.ovladac.flashFirmware();
     apply(await window.ovladac.getState());
-    toast(snap.log || "Firmware odeslán");
+    toast(snap.log || "Destička nastavená");
   } catch (err) {
     toast(err.message);
     apply(await window.ovladac.getState());
