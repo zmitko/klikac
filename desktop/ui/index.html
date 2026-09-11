@@ -135,6 +135,8 @@
                       </div>
                     </div>
                   </div>
+                  <button type="button" class="fw-btn force" id="flash-fw-force">Vynutit zápis</button>
+                  <p class="muted tiny wifi-hint">Když destička Wi‑Fi neuloží (prázdné saved / abort). Nahraje firmware a síť zapíše přímo do flash, obejde rozbitou NVS.</p>
                   <button type="button" class="fw-btn secondary" id="ota-fw">Aktualizovat firmware (Wi-Fi)</button>
                   <div class="muted tiny" id="fw-log"></div>
                 </div>
@@ -164,7 +166,7 @@
               <div class="muted tiny" id="upd-meta">kontrola verze…</div>
             </div>
             <div class="upd-actions">
-              <button type="button" class="fw-btn compact" id="fw-quick-ota" hidden>Firmware (Wi-Fi)</button>
+              <button type="button" class="fw-btn compact" id="fw-quick-ota" hidden>Nahrát firmware (Wi-Fi)</button>
               <button type="button" class="fw-btn compact" id="app-update" hidden>Aktualizovat</button>
             </div>
           </div>
@@ -268,7 +270,7 @@
           </div>
           <div>
             <b>Nová domácnost / jiná IP</b>
-            <span>V kolečku nová Wi‑Fi a IP, init znovu přes COM na PC1. Pak zase HID do PC2. Když log ukáže <code>nvs-set 0/0/0</code> a <code>abort</code>, Klikač musí nahrát nový firmware (ne jen Wi‑Fi) a init zopakovat.</span>
+            <span>V kolečku nová Wi‑Fi a IP, init znovu přes COM na PC1. Pak zase HID do PC2. Když destička Wi‑Fi neuloží (<code>saved (empty)</code> / <code>abort</code>), v kolečku dej <b>Vynutit zápis</b> — nahraje firmware a síť zapíše přímo do flash.</span>
           </div>
           <div>
             <b>Firmware nižší než Klikač</b>

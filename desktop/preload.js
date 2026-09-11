@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld("ovladac", {
   validateMacro: (slot) => ipcRenderer.invoke("validate-macro", slot),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   installUpdate: () => ipcRenderer.invoke("install-update"),
-  flashFirmware: () => ipcRenderer.invoke("flash-firmware"),
+  flashFirmware: (opts) => ipcRenderer.invoke("flash-firmware", opts || {}),
   otaFirmware: () => ipcRenderer.invoke("ota-firmware"),
   healthCheck: () => ipcRenderer.invoke("health-check"),
   clearLog: () => ipcRenderer.invoke("clear-log"),

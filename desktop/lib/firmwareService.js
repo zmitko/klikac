@@ -12,6 +12,7 @@ const { otaTopic } = require("./releaseMeta");
 const { lanIPv4 } = require("./lan");
 const { provisionSerial } = require("./serialProvision");
 const { OTA_PASSWORD } = require("./mqttCreds");
+const { buildCfgFlash, CFG_FLASH_ADDR } = require("./cfgFlashBlob");
 
 class FirmwareService {
   constructor({ mqtt, otaPassword, onChange, onLog }) {
@@ -150,6 +151,7 @@ class FirmwareService {
     const wifiSsid = String(opts.wifiSsid || "").trim();
     const wifiPassword = String(opts.wifiPassword || "");
     const mqttHost = String(opts.mqttHost || lanIPv4()).trim();
+    const force = !!opts.force;
     this.busy = true;
     this.state.error = "";
     this.state.progress = 0;
@@ -169,14 +171,15 @@ class FirmwareService {
       if (!port) {
         throw new Error("Flash kabel (CH343/COM) na tomhle PC není. USB init dělej na PC1 s programovacím USB.");
       }
-      const sendCfg = () => provisionSerial({
+      const sendCfg = (serialForce) => provisionSerial({
         port: port.path,
         wifiSsid,
         wifiPassword,
         mqttHost,
+        force: !!serialForce,
         onLine: (line) => this.setLog(line),
       });
-      const flashThenCfg = async (why) => {
+      const flashFw = async (why) => {
         this.setLog(why);
         this.state.status = "preparing";
         const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
@@ -187,22 +190,70 @@ class FirmwareService {
           port: port.path,
           image: usbImage,
         });
-        this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
         this.state.status = "uploading";
         await new Promise((r) => setTimeout(r, 4000));
-        await sendCfg();
       };
-      this.state.status = "uploading";
-      this.setLog(`COM ${port.path}. Posílám Wi-Fi a IP ${mqttHost} (bez flashe)…`);
-      try {
-        await sendCfg();
-      } catch (provErr) {
-        if (provErr.code === "NO_BANNER") {
-          await flashThenCfg("Na destičce není firmware, nahrávám…");
-        } else if (provErr.code === "NVS_FAIL") {
-          await flashThenCfg("Paměť destičky odmítla zápis, mažu ji nahráním firmware a zkouším znovu…");
-        } else {
-          throw provErr;
+      if (force) {
+        await flashFw("Vynucený zápis: nahrávám firmware…");
+        let flashOk = false;
+        try {
+          await this.writeCfgFlash({
+            port: port.path,
+            wifiSsid,
+            wifiPassword,
+            mqttHost,
+          });
+          flashOk = true;
+        } catch (flashErr) {
+          this.setLog(`Přímý zápis do flash selhal (${flashErr.message}). Zkouším sériový FORCE…`);
+        }
+        this.setLog("Čekám na restart destičky…");
+        await new Promise((r) => setTimeout(r, 4000));
+        try {
+          await sendCfg(true);
+        } catch (serialErr) {
+          if (!flashOk) {
+            throw serialErr;
+          }
+          this.setLog(`${serialErr.message} Flash zápis už je hotový — destička si síť načte po restartu.`);
+        }
+      } else {
+        this.state.status = "uploading";
+        this.setLog(`COM ${port.path}. Posílám Wi-Fi a IP ${mqttHost} (bez flashe)…`);
+        try {
+          await sendCfg(false);
+        } catch (provErr) {
+          if (provErr.code === "NO_BANNER") {
+            await flashFw("Na destičce není firmware, nahrávám…");
+            this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
+            await sendCfg(false);
+          } else if (provErr.code === "NVS_FAIL") {
+            await flashFw("Paměť destičky odmítla zápis, mažu ji nahráním firmware a zkouším znovu…");
+            let flashOk = false;
+            try {
+              await this.writeCfgFlash({
+                port: port.path,
+                wifiSsid,
+                wifiPassword,
+                mqttHost,
+              });
+              flashOk = true;
+            } catch (flashErr) {
+              this.setLog(`Přímý zápis do flash selhal (${flashErr.message}).`);
+            }
+            this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
+            await new Promise((r) => setTimeout(r, 4000));
+            try {
+              await sendCfg(true);
+            } catch (serialErr) {
+              if (!flashOk) {
+                throw serialErr;
+              }
+              this.setLog(`${serialErr.message} Flash zápis už je hotový — destička si síť načte po restartu.`);
+            }
+          } else {
+            throw provErr;
+          }
         }
       }
       this.state.status = "ok";
@@ -271,39 +322,63 @@ class FirmwareService {
     }
   }
 
-  async flashUsb({ port, image }) {
+  async ensureEspflash() {
     let espflash = this.bundledFile("espflash.exe") || path.join(this.cacheDir(), "espflash.exe");
-    if (!fs.existsSync(espflash)) {
-      this.setLog("Stahuji espflash…");
-      let url = "";
-      try {
-        const latest = await fetchLatestRelease();
-        url = latest.espflashUrl;
-      } catch {
-        url = "";
-      }
-      if (!url) {
-        url = "https://github.com/esp-rs/espflash/releases/download/v4.5.0/espflash-x86_64-pc-windows-msvc.zip";
-      }
-      if (url.endsWith(".zip")) {
-        const zip = path.join(this.cacheDir(), "espflash.zip");
-        await downloadFile(url, zip);
-        const { execFile } = require("child_process");
-        const { promisify } = require("util");
-        await promisify(execFile)("powershell.exe", [
-          "-NoProfile",
-          "-Command",
-          `Expand-Archive -Path "${zip}" -DestinationPath "${this.cacheDir()}" -Force`,
-        ], { windowsHide: true });
-        const found = path.join(this.cacheDir(), "espflash.exe");
-        if (!fs.existsSync(found)) {
-          throw new Error("espflash.exe se z archivu nenašel");
-        }
-        espflash = found;
-      } else {
-        await downloadFile(url, espflash);
-      }
+    if (fs.existsSync(espflash)) {
+      return espflash;
     }
+    this.setLog("Stahuji espflash…");
+    let url = "";
+    try {
+      const latest = await fetchLatestRelease();
+      url = latest.espflashUrl;
+    } catch {
+      url = "";
+    }
+    if (!url) {
+      url = "https://github.com/esp-rs/espflash/releases/download/v4.5.0/espflash-x86_64-pc-windows-msvc.zip";
+    }
+    if (url.endsWith(".zip")) {
+      const zip = path.join(this.cacheDir(), "espflash.zip");
+      await downloadFile(url, zip);
+      const { execFile } = require("child_process");
+      const { promisify } = require("util");
+      await promisify(execFile)("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        `Expand-Archive -Path "${zip}" -DestinationPath "${this.cacheDir()}" -Force`,
+      ], { windowsHide: true });
+      const found = path.join(this.cacheDir(), "espflash.exe");
+      if (!fs.existsSync(found)) {
+        throw new Error("espflash.exe se z archivu nenašel");
+      }
+      return found;
+    }
+    await downloadFile(url, espflash);
+    return espflash;
+  }
+
+  async writeCfgFlash({ port, wifiSsid, wifiPassword, mqttHost }) {
+    const blob = buildCfgFlash({ wifiSsid, wifiPassword, mqttHost });
+    const file = path.join(this.cacheDir(), "klikac-cfg.bin");
+    fs.writeFileSync(file, blob);
+    const hex = `0x${CFG_FLASH_ADDR.toString(16)}`;
+    this.setLog(`Zapisuji Wi-Fi/MQTT přímo do flash ${hex} (obejdu NVS)…`);
+    const espflash = await this.ensureEspflash();
+    await this.runProcess(espflash, [
+      "write-bin",
+      "--port",
+      port,
+      "--baud",
+      "921600",
+      hex,
+      file,
+    ]);
+    this.setLog(`Flash cfg zapsaná ${hex}.`);
+  }
+
+  async flashUsb({ port, image }) {
+    const espflash = await this.ensureEspflash();
     const ext = path.extname(image).toLowerCase();
     const base = path.basename(image).toLowerCase();
     let args;

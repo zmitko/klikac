@@ -110,14 +110,28 @@ h2 {
   margin-top: 0;
 }
 
-.gear-menu .fw-btn.secondary {
+.gear-menu .fw-btn.secondary,
+.gear-menu .fw-btn.force {
   margin-top: 8px;
 }
 
 .upd-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+/* v úzké kartě se tlačítka zalomí pod text, ať nevylézají z karty */
+.update-card .row-toggle {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.update-card .row-toggle > div:first-child {
+  flex: 1 1 120px;
+  min-width: 0;
 }
 
 #fw-inline.is-behind {
@@ -458,12 +472,25 @@ h2 {
 }
 .fw-btn.secondary:hover { background: #e3f2fd; }
 
+.fw-btn.force {
+  margin-top: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+}
+.fw-btn.force:hover { background: #ffedd5; }
+
 .fw-btn.compact {
   margin-top: 0;
   width: auto;
-  min-height: 32px;
-  padding: 0 12px;
-  flex: 0 0 auto;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #fw-log {

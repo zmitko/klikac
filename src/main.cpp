@@ -85,6 +85,7 @@ static char serial_line[220];
 static size_t serial_len = 0;
 
 #define CFG_FLASH_MAGIC 0x3146474Bu
+#define CFG_FLASH_ADDR 0xFFF000u
 
 struct CfgFlash {
     uint32_t magic;
@@ -801,18 +802,13 @@ static bool cfg_apply_blob(const CfgFlash *blob) {
 static uint32_t cfg_safe_flash_addr() {
     uint32_t size = 0;
     if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 8192) {
-        return 0;
+        size = 0x1000000u;
     }
-    uint32_t addr = (size - 4096u) & ~4095u;
+    uint32_t addr = size >= 0x1000000u ? CFG_FLASH_ADDR : ((size - 4096u) & ~4095u);
     const esp_partition_t *run = esp_ota_get_running_partition();
     if (run && addr >= run->address && addr < run->address + run->size) {
-        const uint32_t after = (run->address + run->size + 4095u) & ~4095u;
-        if (after + 4096u <= size) {
-            addr = after;
-        } else {
-            Serial.println("KLOG flash-no-room");
-            return 0;
-        }
+        Serial.println("KLOG flash-in-app");
+        return 0;
     }
     return addr;
 }
@@ -953,13 +949,20 @@ static bool cfg_nvs_load() {
     return true;
 }
 
-static bool cfg_save() {
+static bool cfg_save(bool force_flash) {
     if (!wifi_ssid[0] || !mqtt_host[0]) {
         Serial.print("KLOG apply-empty wifi=");
         Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
         Serial.print(" mqtt=");
         Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
         return false;
+    }
+    if (force_flash) {
+        Serial.println("KLOG force-flash");
+        if (cfg_flash_write_and_verify()) {
+            cfg_nvs_write_and_verify();
+            return true;
+        }
     }
     if (cfg_nvs_write_and_verify()) {
         return true;
@@ -1005,8 +1008,9 @@ static void cfg_handle_line(char *line) {
         Serial.println(strlen(mqtt_host));
         return;
     }
-    if (strcmp(line, "KCFG APPLY") == 0) {
-        const bool ok = cfg_save();
+    if (strcmp(line, "KCFG APPLY") == 0 || strcmp(line, "KCFG FORCE") == 0) {
+        const bool force_flash = strcmp(line, "KCFG FORCE") == 0;
+        const bool ok = cfg_save(force_flash);
         Serial.print("KLOG apply wifi=");
         Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
         Serial.print(" mqtt=");

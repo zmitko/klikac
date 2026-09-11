@@ -9,7 +9,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function provisionSerial({ port, wifiSsid, wifiPassword, mqttHost, onLine }) {
+async function provisionSerial({ port, wifiSsid, wifiPassword, mqttHost, force, onLine }) {
   const ssid = String(wifiSsid || "").replace(/[\r\n]/g, "");
   const pass = String(wifiPassword || "").replace(/[\r\n]/g, "");
   const mqtt = String(mqttHost || "").replace(/[\r\n]/g, "");
@@ -24,7 +24,7 @@ async function provisionSerial({ port, wifiSsid, wifiPassword, mqttHost, onLine 
     `KCFG WIFI ${ssid}`,
     `KCFG PASS ${pass}`,
     `KCFG MQTT ${mqtt}`,
-    "KCFG APPLY",
+    force ? "KCFG FORCE" : "KCFG APPLY",
   ];
   fs.writeFileSync(cmdFile, `${lines.join("\n")}\n`, "utf8");
   const script = `

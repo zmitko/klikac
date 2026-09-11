@@ -172,12 +172,13 @@ function bindIpc() {
   ipcMain.handle("validate-macro", (_event, slot) => core.validateMacro(slot));
   ipcMain.handle("check-update", async () => updater.check());
   ipcMain.handle("install-update", async () => updater.install());
-  ipcMain.handle("flash-firmware", async () => {
+  ipcMain.handle("flash-firmware", async (_event, opts) => {
     const ui = core.store.get();
     return firmware.flash({
       wifiSsid: ui.wifiSsid,
       wifiPassword: ui.wifiPassword,
       mqttHost: String(ui.mqttHost || "").trim() || lanIPv4(),
+      force: !!(opts && opts.force),
     });
   });
   ipcMain.handle("ota-firmware", async () => firmware.ota());

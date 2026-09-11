@@ -290,12 +290,14 @@ function apply(snap) {
   const flashing = fw.status === "preparing" || fw.status === "downloading" || fw.status === "uploading";
   $("flash-fw").disabled = flashing;
   $("flash-fw").textContent = flashing && fw.method === "usb" ? "Inicializuji…" : "Inicializovat přes USB";
+  $("flash-fw-force").disabled = flashing;
+  $("flash-fw-force").textContent = flashing && fw.method === "usb" ? "Zapisuji…" : "Vynutit zápis";
   $("ota-fw").disabled = flashing || !device.ip;
   $("ota-fw").textContent = flashing && fw.method === "wifi" ? "Nahrávám přes Wi-Fi…" : "Aktualizovat firmware (Wi-Fi)";
   const quickOta = $("fw-quick-ota");
   quickOta.hidden = !fwBehind;
   quickOta.disabled = flashing || !device.ip;
-  quickOta.textContent = flashing && fw.method === "wifi" ? "Nahrávám…" : "Firmware (Wi-Fi)";
+  quickOta.textContent = flashing && fw.method === "wifi" ? "Nahrávám…" : "Nahrát firmware (Wi-Fi)";
 
   const upd = snap.update || {};
   $("app-ver").textContent = upd.current ? `v${upd.current}` : "";
@@ -528,8 +530,9 @@ document.body.addEventListener("click", async (ev) => {
   }
 });
 
-$("flash-fw").addEventListener("click", async () => {
+async function runUsbInit(force) {
   $("flash-fw").disabled = true;
+  $("flash-fw-force").disabled = true;
   try {
     apply(await window.ovladac.setState(collectUiPatch()));
     const ssid = $("wifi-ssid").value.trim();
@@ -539,6 +542,7 @@ $("flash-fw").addEventListener("click", async () => {
       $("wifi-fold").classList.add("open");
       $("wifi-fold-btn").setAttribute("aria-expanded", "true");
       $("flash-fw").disabled = false;
+      $("flash-fw-force").disabled = false;
       toast(!ssid ? "Nejdřív vyplň Wi-Fi pod tlačítkem." : "Vyplň IP (PC1 kde běží Klikač).");
       return;
     }
@@ -547,17 +551,21 @@ $("flash-fw").addEventListener("click", async () => {
       $("wifi-fold").classList.add("open");
       $("wifi-fold-btn").setAttribute("aria-expanded", "true");
       $("flash-fw").disabled = false;
+      $("flash-fw-force").disabled = false;
       toast("IP (PC1 kde běží Klikač) musí být IPv4, třeba 192.168.0.101.");
       return;
     }
-    const snap = await window.ovladac.flashFirmware();
+    const snap = await window.ovladac.flashFirmware({ force: !!force });
     apply(await window.ovladac.getState());
-    toast(snap.log || "Destička nastavená");
+    toast(snap.log || (force ? "Vynucený zápis hotový" : "Destička nastavená"));
   } catch (err) {
     toast(err.message);
     apply(await window.ovladac.getState());
   }
-});
+}
+
+$("flash-fw").addEventListener("click", () => runUsbInit(false));
+$("flash-fw-force").addEventListener("click", () => runUsbInit(true));
 
 async function runOta() {
   $("ota-fw").disabled = true;
