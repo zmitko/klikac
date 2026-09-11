@@ -4,9 +4,14 @@ const { execFile } = require("child_process");
 const { MQTT_PORT, MQTT_USER, MQTT_PASSWORD } = require("./mqttCreds");
 const { lanIPv4 } = require("./lan");
 
+function isDeviceClient(id) {
+  return String(id || "").startsWith("esp32kbd-");
+}
+
 class MqttBroker {
-  constructor({ onLog }) {
+  constructor({ onLog, onChange }) {
     this.onLog = onLog;
+    this.onChange = onChange;
     this.broker = null;
     this.server = null;
     this.port = MQTT_PORT;
@@ -19,11 +24,22 @@ class MqttBroker {
     }
   }
 
+  deviceIds() {
+    const clients = this.broker && this.broker.clients ? this.broker.clients : {};
+    return Object.keys(clients).filter((id) => isDeviceClient(id));
+  }
+
+  hasDevice() {
+    return this.deviceIds().length > 0;
+  }
+
   snapshot() {
+    const devices = this.deviceIds();
     return {
       port: this.port,
       lanIp: this.lanIp || lanIPv4(),
       clients: this.broker ? this.broker.connectedClients : 0,
+      devices: devices.length,
       listening: !!(this.server && this.server.listening),
     };
   }
@@ -48,9 +64,21 @@ class MqttBroker {
     });
     this.broker.on("clientReady", (client) => {
       this.log(`klient ${client.id}`);
+      if (isDeviceClient(client.id)) {
+        this.log("destička na brokeru");
+      }
+      if (typeof this.onChange === "function") {
+        this.onChange();
+      }
     });
     this.broker.on("clientDisconnect", (client) => {
       this.log(`klient pryč ${client && client.id ? client.id : "?"}`);
+      if (isDeviceClient(client && client.id)) {
+        this.log("destička pryč z brokeru");
+      }
+      if (typeof this.onChange === "function") {
+        this.onChange();
+      }
     });
     this.broker.on("clientError", (client, err) => {
       this.log(`klient chyba ${client && client.id ? client.id : "?"}: ${err.message}`);

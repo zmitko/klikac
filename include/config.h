@@ -36,7 +36,9 @@
 #define MQTT_SETTLE_MS 400
 #define MQTT_KEEPALIVE_S 20
 #define MQTT_HEARTBEAT_MS 10000
-#define WIFI_RECONNECT_MS 5000
+#define WIFI_RECONNECT_MS 12000
+#define WIFI_GIVEUP_MS 15000
+#define WIFI_START_DELAY_MS 1500
 #define OTA_AFTER_MQTT_MS 3000
 
 // Human-like key hold. Typical finger tap is ~60-140 ms, most often ~80-110 ms.

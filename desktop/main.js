@@ -137,6 +137,17 @@ function attachSnap(snap) {
   snap.firmware = firmware ? firmware.snapshot() : null;
   snap.net = broker ? broker.snapshot() : { lanIp: lanIPv4(), port: MQTT_PORT };
   snap.log = appLog ? appLog.snapshot() : [];
+  if (snap.device && broker) {
+    snap.device.present = broker.hasDevice();
+    if (snap.device.present) {
+      snap.device.live = true;
+      if (snap.device.status !== "online") {
+        snap.device.status = "online";
+      }
+    } else if (!snap.device.live) {
+      snap.device.status = "offline";
+    }
+  }
   return snap;
 }
 
@@ -173,8 +184,18 @@ function bindIpc() {
     if (broker) {
       broker.refreshLan();
     }
-    const snap = await core.healthCheck();
-    return attachSnap(snap);
+    const snap = attachSnap(await core.healthCheck());
+    if (snap.device && broker && broker.hasDevice()) {
+      snap.device.live = true;
+      snap.device.present = true;
+      if (snap.device.health === "timeout") {
+        snap.device.health = "ok";
+        if (appLog) {
+          appLog.push("app", "healthcheck: destička je na brokeru");
+        }
+      }
+    }
+    return snap;
   });
 }
 
@@ -188,7 +209,10 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     const cfg = loadConfig();
     appLog = new AppLog({ onChange: () => sendState() });
-    broker = new MqttBroker({ onLog: (src, msg) => appLog.push(src, msg) });
+    broker = new MqttBroker({
+      onLog: (src, msg) => appLog.push(src, msg),
+      onChange: () => sendState(),
+    });
     try {
       await broker.start();
     } catch (err) {

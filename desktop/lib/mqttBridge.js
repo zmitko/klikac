@@ -77,6 +77,8 @@ class MqttBridge {
         }
         if (text === "online") {
           this.touchLive();
+        } else if (text === "offline") {
+          this.device.lastLiveAt = 0;
         }
       } else if (topic === TOPIC_USB) {
         this.device.usb = text || "unknown";
@@ -109,9 +111,6 @@ class MqttBridge {
   }
 
   isLive() {
-    if (this.device.status === "online") {
-      return true;
-    }
     return !!(this.device.lastLiveAt && (Date.now() - this.device.lastLiveAt) < LIVE_MS);
   }
 

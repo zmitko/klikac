@@ -141,7 +141,7 @@ function apply(snap) {
   $("esp-meta").textContent = bits.join(" · ");
   const net = snap.net || {};
   $("broker-meta").textContent = net.lanIp
-    ? `broker ${net.lanIp}:${net.port || 1883}${net.clients ? ` · ${net.clients} klient` : ""}`
+    ? `broker ${net.lanIp}:${net.port || 1883}${net.clients ? ` · ${net.clients} klient` : ""}${net.devices ? " · destička ano" : ""}`
     : "broker —";
 
   const fw = snap.firmware || {};

@@ -56,6 +56,10 @@ static uint32_t mqtt_ready_at = 0;
 static uint32_t last_mqtt_attempt = 0;
 static uint32_t last_wifi_attempt = 0;
 static uint32_t last_heartbeat = 0;
+static uint32_t wifi_begin_at = 0;
+static uint32_t wifi_start_at = 0;
+static uint32_t mqtt_reannounce_at = 0;
+static volatile bool usb_announce = false;
 
 static int last_button = HIGH;
 static uint32_t last_button_ms = 0;
@@ -81,6 +85,7 @@ static void usb_event(void *arg, esp_event_base_t base, int32_t id, void *data) 
         case ARDUINO_USB_STARTED_EVENT:
         case ARDUINO_USB_RESUME_EVENT:
             usb_mounted = true;
+            usb_announce = true;
             break;
         case ARDUINO_USB_STOPPED_EVENT:
         case ARDUINO_USB_SUSPEND_EVENT:
@@ -735,6 +740,7 @@ static bool mqtt_connect() {
     mqtt.subscribe(MQTT_TOPIC_OTA, 0);
     mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
     last_heartbeat = millis();
+    mqtt_reannounce_at = millis() + 400;
     publish_discovery();
     publish_usb();
     publish_ip();
@@ -775,7 +781,29 @@ static void ota_setup() {
     Serial.println(WiFi.localIP());
 }
 
+static void wifi_begin_now(const char *why) {
+    if (!wifi_ssid[0]) {
+        Serial.println("Wi-Fi čeká na USB KCFG");
+        return;
+    }
+    Serial.print("Wi-Fi ");
+    Serial.print(why);
+    Serial.print(" ");
+    Serial.println(wifi_ssid);
+    WiFi.disconnect(false, false);
+    delay(50);
+    WiFi.begin(wifi_ssid, wifi_pass);
+    wifi_begin_at = millis();
+    last_wifi_attempt = wifi_begin_at;
+}
+
 static void wifi_mqtt_loop() {
+    const uint32_t now = millis();
+    if (wifi_start_at && now < wifi_start_at) {
+        return;
+    }
+    wifi_start_at = 0;
+
     if (WiFi.status() != WL_CONNECTED) {
         wifi_ok_since = 0;
         ota_ready = false;
@@ -787,17 +815,13 @@ static void wifi_mqtt_loop() {
             mqtt.disconnect();
             mqtt_disconnect_cleanup();
         }
-        const uint32_t now = millis();
-        if (now - last_wifi_attempt >= WIFI_RECONNECT_MS) {
-            last_wifi_attempt = now;
-            if (!wifi_ssid[0]) {
-                Serial.println("Wi-Fi čeká na USB KCFG");
-                return;
-            }
-            Serial.println("Wi-Fi reconnect");
-            WiFi.disconnect();
-            WiFi.begin(wifi_ssid, wifi_pass);
+        if (!wifi_ssid[0]) {
+            return;
         }
+        if (wifi_begin_at && (now - wifi_begin_at) < WIFI_GIVEUP_MS) {
+            return;
+        }
+        wifi_begin_now(wifi_begin_at ? "reconnect" : "start");
         return;
     }
 
@@ -809,16 +833,21 @@ static void wifi_mqtt_loop() {
         if (!mqtt_host[0]) {
             return;
         }
-        const uint32_t now = millis();
         if (now - last_mqtt_attempt >= MQTT_RECONNECT_MS) {
             last_mqtt_attempt = now;
             mqtt_connect();
         }
     } else {
         mqtt.loop();
-        const uint32_t now_hb = millis();
-        if (now_hb - last_heartbeat >= MQTT_HEARTBEAT_MS) {
-            last_heartbeat = now_hb;
+        if (mqtt_reannounce_at && now >= mqtt_reannounce_at) {
+            mqtt_reannounce_at = 0;
+            mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+            publish_usb();
+            publish_ip();
+            publish_fw();
+        }
+        if (now - last_heartbeat >= MQTT_HEARTBEAT_MS) {
+            last_heartbeat = now;
             mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
             publish_fw();
         }
@@ -866,13 +895,11 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setAutoReconnect(true);
-    WiFi.persistent(true);
-    last_wifi_attempt = millis();
-    if (wifi_ssid[0]) {
-        WiFi.begin(wifi_ssid, wifi_pass);
-        Serial.print("Wi-Fi connecting to ");
-        Serial.println(wifi_ssid);
-    } else {
+    WiFi.persistent(false);
+    wifi_start_at = millis() + WIFI_START_DELAY_MS;
+    last_wifi_attempt = 0;
+    wifi_begin_at = 0;
+    if (!wifi_ssid[0]) {
         Serial.println("Wi-Fi čeká na USB inicializaci (KCFG)");
     }
 }
@@ -892,6 +919,14 @@ void loop() {
 
     serial_poll();
     wifi_mqtt_loop();
+
+    if (usb_announce) {
+        usb_announce = false;
+        if (mqtt.connected()) {
+            mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+            publish_usb();
+        }
+    }
 
     if (http_ota_req) {
         http_ota_req = false;
