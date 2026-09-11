@@ -31,6 +31,10 @@ function requestJson(url) {
         }
       });
     });
+    req.setTimeout(20000, () => {
+      req.destroy();
+      reject(new Error("GitHub neodpověděl"));
+    });
     req.on("error", reject);
   });
 }
@@ -70,6 +74,10 @@ function downloadFile(url, dest, onProgress) {
           });
         });
         out.on("error", reject);
+      });
+      req.setTimeout(30000, () => {
+        req.destroy();
+        reject(new Error("Stahování z GitHubu vypršelo"));
       });
       req.on("error", reject);
     };

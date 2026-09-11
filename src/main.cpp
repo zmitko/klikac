@@ -85,7 +85,9 @@ static char serial_line[220];
 static size_t serial_len = 0;
 
 #define CFG_FLASH_MAGIC 0x3146474Bu
-#define CFG_FLASH_ADDR 0xFFF000u
+#define CFG_FLASH_ADDR 0x200000u
+#define CFG_FLASH_ADDR_ALT 0x3F0000u
+#define CFG_FLASH_ADDR_LEGACY 0xFFF000u
 
 struct CfgFlash {
     uint32_t magic;
@@ -799,18 +801,39 @@ static bool cfg_apply_blob(const CfgFlash *blob) {
     return true;
 }
 
+static const uint32_t kCfgFlashAddrs[] = {
+    CFG_FLASH_ADDR,
+    CFG_FLASH_ADDR_ALT,
+    CFG_FLASH_ADDR_LEGACY,
+};
+
+static uint32_t cfg_flash_used_end() {
+    const uint32_t sketch = (ESP.getSketchSize() + 4095u) & ~4095u;
+    return 0x10000u + sketch + 4096u;
+}
+
+static bool cfg_addr_after_app(uint32_t addr) {
+    return addr >= cfg_flash_used_end();
+}
+
 static uint32_t cfg_safe_flash_addr() {
     uint32_t size = 0;
     if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 8192) {
         size = 0x1000000u;
     }
-    uint32_t addr = size >= 0x1000000u ? CFG_FLASH_ADDR : ((size - 4096u) & ~4095u);
-    const esp_partition_t *run = esp_ota_get_running_partition();
-    if (run && addr >= run->address && addr < run->address + run->size) {
-        Serial.println("KLOG flash-in-app");
-        return 0;
+    const uint32_t used = cfg_flash_used_end();
+    Serial.print("KLOG flash-size 0x");
+    Serial.print(size, HEX);
+    Serial.print(" used-end 0x");
+    Serial.println(used, HEX);
+    for (size_t i = 0; i < sizeof(kCfgFlashAddrs) / sizeof(kCfgFlashAddrs[0]); i++) {
+        const uint32_t addr = kCfgFlashAddrs[i];
+        if (addr + 4096u <= size && cfg_addr_after_app(addr)) {
+            return addr;
+        }
     }
-    return addr;
+    Serial.println("KLOG flash-no-addr");
+    return 0;
 }
 
 static bool cfg_nvs_init() {
@@ -918,24 +941,43 @@ static bool cfg_flash_write_and_verify() {
     return strcmp(readback.wifi, wifi_ssid) == 0 && strcmp(readback.mqtt, mqtt_host) == 0;
 }
 
-static bool cfg_flash_load() {
-    const uint32_t addr = cfg_safe_flash_addr();
-    if (!addr) {
-        return false;
-    }
+static bool cfg_flash_load_at(uint32_t addr) {
     CfgFlash blob;
     memset(&blob, 0, sizeof(blob));
-    if (esp_flash_read(NULL, &blob, addr, sizeof(blob)) != ESP_OK) {
+    const esp_err_t err = esp_flash_read(NULL, &blob, addr, sizeof(blob));
+    Serial.print("KLOG flash-try 0x");
+    Serial.print(addr, HEX);
+    Serial.print(" e=");
+    Serial.print((int)err);
+    Serial.print(" mag=0x");
+    Serial.println(blob.magic, HEX);
+    if (err != ESP_OK || !cfg_apply_blob(&blob)) {
         return false;
     }
-    if (!cfg_apply_blob(&blob)) {
-        return false;
-    }
-    Serial.print("KLOG cfg-flash wifi=");
+    Serial.print("KLOG cfg-flash 0x");
+    Serial.print(addr, HEX);
+    Serial.print(" wifi=");
     Serial.print(wifi_ssid);
     Serial.print(" mqtt=");
     Serial.println(mqtt_host);
     return true;
+}
+
+static bool cfg_flash_load() {
+    uint32_t size = 0;
+    if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 8192) {
+        size = 0x1000000u;
+    }
+    for (size_t i = 0; i < sizeof(kCfgFlashAddrs) / sizeof(kCfgFlashAddrs[0]); i++) {
+        const uint32_t addr = kCfgFlashAddrs[i];
+        if (addr + 4096u > size) {
+            continue;
+        }
+        if (cfg_flash_load_at(addr)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool cfg_nvs_load() {

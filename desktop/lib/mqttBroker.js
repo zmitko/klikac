@@ -2,6 +2,7 @@ const net = require("net");
 const { Aedes } = require("aedes");
 const { execFile } = require("child_process");
 const { MQTT_PORT, MQTT_USER, MQTT_PASSWORD } = require("./mqttCreds");
+const { OTA_HTTP_PORT, OTA_ESPOTA_PORT } = require("./klikacPorts");
 const { lanIPv4 } = require("./lan");
 
 function isDeviceClient(id) {
@@ -110,13 +111,14 @@ class MqttBroker {
   }
 
   openFirewall() {
+    const ports = [this.port, OTA_HTTP_PORT, OTA_ESPOTA_PORT];
     execFile("netsh", [
       "advfirewall", "firewall", "add", "rule",
-      "name=Klikac MQTT",
+      "name=Klikac",
       "dir=in",
       "action=allow",
       "protocol=TCP",
-      `localport=${this.port}`,
+      `localport=${ports.join(",")}`,
       "profile=any",
     ], { windowsHide: true }, (err, _stdout, stderr) => {
       const text = `${err ? err.message : ""} ${stderr || ""}`;
@@ -124,9 +126,9 @@ class MqttBroker {
         return;
       }
       if (err) {
-        this.log("firewall 1883 se nepodařilo přidat (nejsem správce). Povol port ručně, pokud destička neuvidí PC1.");
+        this.log(`firewall ${ports.join("/")} se nepodařilo přidat (nejsem správce). Povol porty ručně, pokud destička neuvidí PC1 nebo Wi-Fi OTA visí.`);
       } else {
-        this.log("firewall 1883 povolen");
+        this.log(`firewall ${ports.join("/")} povolen`);
       }
     });
   }

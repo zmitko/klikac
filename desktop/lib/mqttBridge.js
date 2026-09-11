@@ -128,6 +128,10 @@ class MqttBridge {
     return !!(this.client && this.client.connected);
   }
 
+  clearOtaStatus() {
+    this.device.otaStatus = "";
+  }
+
   publishCommand(payload) {
     return this.publish(TOPIC_COMMAND, payload);
   }

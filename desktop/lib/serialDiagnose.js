@@ -39,7 +39,11 @@ function interpretDiagnose(lines) {
   if (noBanner) {
     hint = "Destička na COM nemluví. Programovací USB (CH343), ne HID. Případně drž BOOT.";
   } else if (emptyWifi) {
-    hint = "V destičce není Wi-Fi. Force zápis na COM a nech kabel, dokud v logu nebude „destička na brokeru“.";
+    if (/KLOG cfg-none|KLOG flash-try/.test(text)) {
+      hint = "Firmware běží, ale cfg ve flash nenašel (wifi prázdná). Zkus znovu Vynutit zápis v nové verzi Klikače — cfg se píše na 0x200000, ne jen na konec flash.";
+    } else {
+      hint = "V destičce není Wi-Fi. Force zápis na COM a nech kabel, dokud v logu nebude „destička na brokeru“.";
+    }
   } else if (wifiSta === "1") {
     hint = `SSID „${wifi}“ destička nevidí. Musí to být 2,4 GHz (ne 5 GHz, ne host), stejný název včetně apostrofu.`;
   } else if (wifiSta === "4") {

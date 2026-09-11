@@ -4,6 +4,8 @@ const fs = require("fs");
 const net = require("net");
 const path = require("path");
 
+const { OTA_ESPOTA_PORT } = require("./klikacPorts");
+
 const FLASH = 0;
 const AUTH = 200;
 
@@ -50,19 +52,38 @@ async function invite(espIp, espPort, message, tries, timeoutMs) {
   throw lastErr;
 }
 
-function pushFirmware({ host, password, filePath, onProgress }) {
+function pushFirmware({ host, password, filePath, onProgress, listenPort }) {
   const filename = path.resolve(filePath);
   const bin = fs.readFileSync(filename);
   const fileMd5 = md5(bin);
-  const localPort = 10000 + Math.floor(Math.random() * 50000);
+  const localPort = listenPort || OTA_ESPOTA_PORT;
   const inviteMsg = `${FLASH} ${localPort} ${bin.length} ${fileMd5}\n`;
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let connectTimer;
     const server = net.createServer();
-    server.on("error", reject);
+    const finish = (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(connectTimer);
+      try {
+        server.close();
+      } catch {
+        /* already closed */
+      }
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
+    server.on("error", (err) => finish(err));
     server.listen(localPort, "0.0.0.0", async () => {
       try {
-        let data = await invite(host, 3232, inviteMsg, 10, 1000);
+        let data = await invite(host, 3232, inviteMsg, 8, 1000);
         if (data.startsWith("AUTH")) {
           const nonce = data.trim().split(/\s+/)[1];
           const cnonceText = `${filename}${bin.length}${fileMd5}${host}`;
@@ -70,17 +91,20 @@ function pushFirmware({ host, password, filePath, onProgress }) {
           const passmd5 = md5(String(password || ""));
           const result = md5(`${passmd5}:${nonce}:${cnonce}`);
           const authMsg = `${AUTH} ${cnonce} ${result}\n`;
-          data = await invite(host, 3232, authMsg, 1, 10000);
+          data = await invite(host, 3232, authMsg, 1, 8000);
         }
         if (!data.includes("OK")) {
           throw new Error(`OTA invitation rejected: ${data.trim()}`);
         }
+        connectTimer = setTimeout(() => {
+          finish(new Error(`Destička OTA přijala, ale nepřipojila se na TCP ${localPort} (firewall).`));
+        }, 12000);
       } catch (err) {
-        server.close();
-        reject(err);
+        finish(err);
       }
     });
     server.on("connection", (socket) => {
+      clearTimeout(connectTimer);
       socket.setTimeout(120000);
       let offset = 0;
       const sendNext = () => {
@@ -98,21 +122,16 @@ function pushFirmware({ host, password, filePath, onProgress }) {
         const text = chunk.toString("utf8");
         if (text.includes("OK") && offset >= bin.length) {
           socket.end();
-          server.close();
-          resolve();
+          finish();
           return;
         }
         sendNext();
       });
       socket.on("timeout", () => {
         socket.destroy();
-        server.close();
-        reject(new Error("OTA přenos vypršel"));
+        finish(new Error("OTA přenos vypršel"));
       });
-      socket.on("error", (err) => {
-        server.close();
-        reject(err);
-      });
+      socket.on("error", (err) => finish(err));
       sendNext();
     });
   });

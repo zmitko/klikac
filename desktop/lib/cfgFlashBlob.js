@@ -1,6 +1,7 @@
 // Same packed layout as CfgFlash in src/main.cpp (little-endian).
 const CFG_FLASH_MAGIC = 0x3146474b;
-const CFG_FLASH_ADDR = 0xfff000;
+const CFG_FLASH_ADDR = 0x200000;
+const CFG_FLASH_ADDRS = [0x200000, 0x3f0000, 0xfff000];
 const WIFI_LEN = 36;
 const PASS_LEN = 68;
 const MQTT_LEN = 48;
@@ -60,6 +61,7 @@ function parseCfgFlash(buf) {
 module.exports = {
   CFG_FLASH_MAGIC,
   CFG_FLASH_ADDR,
+  CFG_FLASH_ADDRS,
   BLOB_SIZE,
   buildCfgFlash,
   parseCfgFlash,

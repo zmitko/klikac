@@ -35,6 +35,18 @@ test("diagnose: Wi-Fi je, MQTT ne", () => {
   assert.match(r.hint, /1883|firewall|IP/);
 });
 
+test("diagnose: cfg-none po zápisu na konec flash", () => {
+  const r = interpretDiagnose([
+    "klikac firmware 1.1.2",
+    "KLOG cfg-none",
+    "KLOG flash-try 0xFFF000 e=0 mag=0xFFFFFFFF",
+    "KLOG wifi=(empty)",
+    "KLOG mqtt=(empty)",
+    "Wi-Fi čeká na USB inicializaci (KCFG)",
+  ]);
+  assert.match(r.hint, /0x200000|cfg ve flash/);
+});
+
 test("diagnose: MQTT connected", () => {
   const r = interpretDiagnose([
     "klikac firmware 1.1.1",

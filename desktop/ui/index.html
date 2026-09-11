@@ -280,12 +280,12 @@
           </div>
           <div>
             <b>Firmware nižší než Klikač</b>
-            <span>Destička online → Aktualizovat firmware (Wi‑Fi). Kabely u PC2 neměň.</span>
+            <span>Destička online → Aktualizovat firmware (Wi‑Fi). Kabely u PC2 neměň. Když tlačítko visí na Nahrávám, je to starý Klikač — Wi‑Fi OTA potřebuje TCP 18080.</span>
           </div>
           <div>
             <b>Firewall na PC1 (správcovský PowerShell)</b>
-            <span>když destička broker nevidí:</span>
-            <code>netsh advfirewall firewall add rule name="Klikac MQTT" dir=in action=allow protocol=TCP localport=1883 profile=any</code>
+            <span>když destička broker nevidí, nebo Wi‑Fi OTA visí / destička si bin nestáhne:</span>
+            <code>netsh advfirewall firewall add rule name="Klikac" dir=in action=allow protocol=TCP localport=1883,18080,18232 profile=any</code>
           </div>
         </div>
       </div>

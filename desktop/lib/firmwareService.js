@@ -13,7 +13,8 @@ const { lanIPv4 } = require("./lan");
 const { provisionSerial } = require("./serialProvision");
 const { diagnoseSerial } = require("./serialDiagnose");
 const { OTA_PASSWORD } = require("./mqttCreds");
-const { buildCfgFlash, CFG_FLASH_ADDR } = require("./cfgFlashBlob");
+const { OTA_HTTP_PORT } = require("./klikacPorts");
+const { buildCfgFlash, CFG_FLASH_ADDRS } = require("./cfgFlashBlob");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,7 +127,11 @@ class FirmwareService {
     }
   }
 
-  async resolveImages() {
+  async resolveImages(opts = {}) {
+    const bundledBin = this.bundledFile("firmware.bin");
+    if (opts.otaOnly && bundledBin) {
+      return { firmwareBin: bundledBin, factoryBin: "", elf: "", version: "" };
+    }
     let latest;
     try {
       latest = (await this.check()).latest;
@@ -136,9 +141,12 @@ class FirmwareService {
     }
     const firmwareBin = latest
       ? await this.ensureAsset(latest.firmwareBinUrl, "firmware.bin")
-      : this.bundledFile("firmware.bin");
+      : bundledBin;
     if (!firmwareBin) {
       throw new Error("firmware.bin není k dispozici. Nejdřív vydaj release, nebo zkompiluj PlatformIO.");
+    }
+    if (opts.otaOnly) {
+      return { firmwareBin, factoryBin: "", elf: "", version: latest ? latest.version : "" };
     }
     const factoryBin = latest && latest.factoryUrl
       ? await this.ensureAsset(latest.factoryUrl, "firmware-factory.bin")
@@ -260,9 +268,21 @@ class FirmwareService {
       if (!ip) {
         throw new Error("Destička není online. Nech ji na Wi-Fi u PC2, Klikač na PC1.");
       }
-      const { firmwareBin } = await this.resolveImages();
-      this.setLog(`Wi-Fi OTA na ${ip}…`);
+      const beforeFw = this.mqtt.snapshot().fw || "";
+      const { firmwareBin, version } = await this.resolveImages({ otaOnly: true });
+      this.state.status = "uploading";
+      this.setLog(`Wi-Fi OTA${version ? ` ${version}` : ""} na ${ip} přes HTTP ${OTA_HTTP_PORT}…`);
       try {
+        await this.flashHttp(firmwareBin, { beforeFw });
+        this.state.status = "ok";
+        this.state.progress = 1;
+        this.setLog("Firmware nahraný přes Wi-Fi. Destička je znovu na MQTT.");
+        return this.snapshot();
+      } catch (httpErr) {
+        if (httpErr.code !== "NO_DOWNLOAD") {
+          throw httpErr;
+        }
+        this.setLog(`${httpErr.message} Zkouším ArduinoOTA…`);
         await pushFirmware({
           host: ip,
           password: this.otaPassword,
@@ -273,16 +293,11 @@ class FirmwareService {
             this.emit();
           },
         });
+        this.setLog("ArduinoOTA hotové. Čekám až destička naskočí s novou verzí…");
+        await this.waitForNewFw(beforeFw, 60000);
         this.state.status = "ok";
         this.state.progress = 1;
-        this.setLog("Firmware nahraný přes Wi-Fi (ArduinoOTA). Destička se restartuje.");
-        return this.snapshot();
-      } catch (otaErr) {
-        this.setLog(`ArduinoOTA selhalo (${otaErr.message}). Destička si ho stáhne z Klikače…`);
-        await this.flashHttp(firmwareBin);
-        this.state.status = "ok";
-        this.state.progress = 1;
-        this.setLog("Odkaz na firmware odeslán. Po restartu destičky zkontroluj verzi.");
+        this.setLog("Firmware nahraný přes Wi-Fi (ArduinoOTA).");
         return this.snapshot();
       }
     } catch (err) {
@@ -420,19 +435,25 @@ class FirmwareService {
     const blob = buildCfgFlash({ wifiSsid, wifiPassword, mqttHost });
     const file = path.join(this.cacheDir(), "klikac-cfg.bin");
     fs.writeFileSync(file, blob);
-    const hex = `0x${CFG_FLASH_ADDR.toString(16)}`;
-    this.setLog(`Zapisuji Wi-Fi „${wifiSsid}“ / MQTT ${mqttHost} přímo do flash ${hex} (obejdu NVS)…`);
+    const parsed = require("./cfgFlashBlob").parseCfgFlash(blob);
+    this.setLog(`Cfg blob wifi=„${parsed.wifiSsid}“ mqtt=${parsed.mqttHost} (${blob.length} B)`);
     const espflash = await this.ensureEspflash();
-    await this.runProcess(espflash, [
-      "write-bin",
-      "--port",
-      port,
-      "--baud",
-      "921600",
-      hex,
-      file,
-    ]);
-    this.setLog(`Flash cfg zapsaná ${hex}.`);
+    for (const addr of CFG_FLASH_ADDRS) {
+      const hex = `0x${addr.toString(16)}`;
+      this.setLog(`Zapisuji Wi-Fi/MQTT do flash ${hex} (obejdu NVS)…`);
+      await this.runProcess(espflash, [
+        "write-bin",
+        "--port",
+        port,
+        "--baud",
+        "921600",
+        "--flash-size",
+        "16mb",
+        hex,
+        file,
+      ]);
+      this.setLog(`Flash cfg zapsaná ${hex}.`);
+    }
   }
 
   async flashUsb({ port, image }) {
@@ -478,7 +499,27 @@ class FirmwareService {
     });
   }
 
-  async flashHttp(firmwareBin) {
+  async waitForNewFw(beforeFw, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const snap = this.mqtt.snapshot();
+      if (snap.otaStatus === "ok") {
+        this.setLog("Destička potvrdila OTA.");
+        return snap.fw || beforeFw || "ok";
+      }
+      if (snap.fw && beforeFw && snap.fw !== beforeFw) {
+        this.setLog(`Destička hlásí firmware ${snap.fw}.`);
+        return snap.fw;
+      }
+      if (snap.otaStatus && snap.otaStatus !== "start" && snap.otaStatus !== "ok") {
+        throw new Error(`Destička OTA odmítla: ${snap.otaStatus}`);
+      }
+      await sleep(400);
+    }
+    throw new Error("Destička po OTA nehlásí novou verzi. Zkus znovu, nebo nahraj přes USB.");
+  }
+
+  async flashHttp(firmwareBin, { beforeFw = "" } = {}) {
     if (!this.mqtt.isReady()) {
       throw new Error("MQTT není připojený, destička si firmware nestáhne");
     }
@@ -486,32 +527,72 @@ class FirmwareService {
     if (!ip) {
       throw new Error("PC1 nemá LAN IP pro HTTP OTA");
     }
-    const url = await this.serveFile(firmwareBin, ip);
-    this.mqtt.publish(otaTopic, url);
-    this.setLog(`Odesláno destičce: ${url}`);
+    if (typeof this.mqtt.clearOtaStatus === "function") {
+      this.mqtt.clearOtaStatus();
+    }
+    const served = await this.serveFile(firmwareBin, ip, OTA_HTTP_PORT);
+    this.mqtt.publish(otaTopic, served.url);
+    this.setLog(`Odesláno destičce: ${served.url}`);
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline && !served.downloaded()) {
+      const snap = this.mqtt.snapshot();
+      if (snap.otaStatus && snap.otaStatus !== "start" && snap.otaStatus !== "ok") {
+        served.close();
+        throw new Error(`Destička OTA odmítla: ${snap.otaStatus}`);
+      }
+      await sleep(400);
+    }
+    if (!served.downloaded()) {
+      served.close();
+      const err = new Error(`Destička si firmware nestáhla z ${served.url}. Povol na PC1 firewall TCP ${OTA_HTTP_PORT}.`);
+      err.code = "NO_DOWNLOAD";
+      throw err;
+    }
+    this.setLog("Destička stahuje firmware. Čekám na restart a novou verzi…");
+    try {
+      await this.waitForNewFw(beforeFw, 90000);
+    } finally {
+      served.close();
+    }
   }
 
-  serveFile(filePath, ip) {
+  serveFile(filePath, ip, port) {
     return new Promise((resolve, reject) => {
+      let downloaded = false;
+      let closed = false;
       const server = http.createServer(async (req, res) => {
-        if (req.url !== "/firmware.bin") {
+        const url = String(req.url || "").split("?")[0];
+        if (url !== "/firmware.bin") {
           res.statusCode = 404;
           res.end();
           return;
         }
+        this.setLog("Destička si bere firmware.bin…");
+        downloaded = true;
         res.setHeader("Content-Type", "application/octet-stream");
         res.setHeader("Content-Length", fs.statSync(filePath).size);
         try {
           await pipeline(createReadStream(filePath), res);
+          this.state.progress = 1;
+          this.emit();
         } catch {
           /* client hangup */
         }
-        setTimeout(() => server.close(), 2000);
       });
+      const close = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        server.close();
+      };
       server.on("error", reject);
-      server.listen(0, "0.0.0.0", () => {
-        const { port } = server.address();
-        resolve(`http://${ip}:${port}/firmware.bin`);
+      server.listen(port, "0.0.0.0", () => {
+        resolve({
+          url: `http://${ip}:${port}/firmware.bin`,
+          downloaded: () => downloaded,
+          close,
+        });
       });
     });
   }
