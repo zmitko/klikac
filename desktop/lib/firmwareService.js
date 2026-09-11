@@ -14,7 +14,10 @@ const { provisionSerial } = require("./serialProvision");
 const { diagnoseSerial } = require("./serialDiagnose");
 const { OTA_PASSWORD } = require("./mqttCreds");
 const { OTA_HTTP_PORT } = require("./klikacPorts");
-const { buildCfgFlash, CFG_FLASH_ADDRS } = require("./cfgFlashBlob");
+const { buildCfgFlash, parseCfgFlash, CFG_PART_ADDR } = require("./cfgFlashBlob");
+const { elfFlashArgs, writeBinArgs } = require("./espflashArgs");
+
+const PARTITION_CSV = "klikac_16mb.csv";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -69,6 +72,7 @@ class FirmwareService {
   bundledFile(name) {
     const roots = [];
     roots.push(path.join(__dirname, "..", "..", ".pio", "build", "esp32-s3-n16r8"));
+    roots.push(path.join(__dirname, "..", "..", "partitions"));
     if (process.resourcesPath) {
       roots.push(path.join(process.resourcesPath, "firmware"));
       roots.push(path.join(process.resourcesPath, "tools"));
@@ -146,7 +150,7 @@ class FirmwareService {
       throw new Error("firmware.bin není k dispozici. Nejdřív vydaj release, nebo zkompiluj PlatformIO.");
     }
     if (opts.otaOnly) {
-      return { firmwareBin, factoryBin: "", elf: "", version: latest ? latest.version : "" };
+      return { firmwareBin, factoryBin: "", elf: "", partitionTable: "", version: latest ? latest.version : "" };
     }
     const factoryBin = latest && latest.factoryUrl
       ? await this.ensureAsset(latest.factoryUrl, "firmware-factory.bin")
@@ -154,7 +158,22 @@ class FirmwareService {
     const elf = latest && latest.firmwareElfUrl
       ? await this.ensureAsset(latest.firmwareElfUrl, "firmware.elf")
       : this.bundledFile("firmware.elf");
-    return { firmwareBin, factoryBin, elf, version: latest ? latest.version : "" };
+    const partitionTable = await this.resolvePartitionTable(latest);
+    const bootloader = latest && latest.bootloaderUrl
+      ? await this.ensureAsset(latest.bootloaderUrl, "bootloader.bin")
+      : (this.bundledFile("bootloader.bin") || "");
+    return { firmwareBin, factoryBin, elf, partitionTable, bootloader, version: latest ? latest.version : "" };
+  }
+
+  // Tabulka oddílů musí jít do destičky spolu s firmwarem: dělá app0/app1 pro
+  // Wi-Fi OTA a sektor klikcfg pro Wi-Fi/MQTT.
+  async resolvePartitionTable(latest) {
+    try {
+      return await this.ensureAsset(latest ? latest.partitionCsvUrl : "", PARTITION_CSV);
+    } catch (err) {
+      this.setLog(`Tabulku oddílů (${PARTITION_CSV}) nemám: ${err.message}`);
+      return "";
+    }
   }
 
   async flash(opts = {}) {
@@ -195,13 +214,15 @@ class FirmwareService {
       const flashFw = async (why) => {
         this.setLog(why);
         this.state.status = "preparing";
-        const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
+        const { firmwareBin, factoryBin, elf, partitionTable, bootloader, version } = await this.resolveImages();
         const usbImage = elf || factoryBin || firmwareBin;
         this.setLog(`Nahrávám ${path.basename(usbImage)}${version ? ` ${version}` : ""}`);
         this.setLog(`USB ${port.path} (${port.name || "sériový port"}). Drž BOOT, pokud deska neskáče do flashe.`);
         await this.flashUsb({
           port: port.path,
           image: usbImage,
+          partitionTable,
+          bootloader,
         });
         this.state.status = "uploading";
         await sleep(4000);
@@ -213,7 +234,7 @@ class FirmwareService {
           wifiPassword,
           mqttHost,
         });
-        this.setLog("Síť je ve flash. Sériový FORCE neposílám — ten by zápis mohl smazat.");
+        this.setLog("Síť je v oddílu klikcfg. Sériový FORCE neposílám — ten by zápis mohl smazat.");
       };
       if (force) {
         await flashFw("Vynucený zápis: nahrávám firmware…");
@@ -376,6 +397,7 @@ class FirmwareService {
       info.firmware ? `fw ${info.firmware}` : "",
       `wifi=${info.wifi || "(empty)"}`,
       `mqtt=${info.mqtt || "(empty)"}`,
+      info.cfgStore ? `cfg=${info.cfgStore}` : "",
       info.wifiSta ? `sta=${info.wifiSta}${info.wifiStaLabel ? ` ${info.wifiStaLabel}` : ""}` : "",
       info.wifiIp ? `ip=${info.wifiIp}` : "",
       info.mqttRc !== "" && info.mqttRc != null ? `mqtt-rc=${info.mqttRc}` : "",
@@ -435,38 +457,34 @@ class FirmwareService {
     const blob = buildCfgFlash({ wifiSsid, wifiPassword, mqttHost });
     const file = path.join(this.cacheDir(), "klikac-cfg.bin");
     fs.writeFileSync(file, blob);
-    const parsed = require("./cfgFlashBlob").parseCfgFlash(blob);
+    const parsed = parseCfgFlash(blob);
     this.setLog(`Cfg blob wifi=„${parsed.wifiSsid}“ mqtt=${parsed.mqttHost} (${blob.length} B)`);
     const espflash = await this.ensureEspflash();
-    for (const addr of CFG_FLASH_ADDRS) {
-      const hex = `0x${addr.toString(16)}`;
-      this.setLog(`Zapisuji Wi-Fi/MQTT do flash ${hex} (obejdu NVS)…`);
-      await this.runProcess(espflash, [
-        "write-bin",
-        "--port",
-        port,
-        "--baud",
-        "921600",
-        "--flash-size",
-        "16mb",
-        hex,
-        file,
-      ]);
-      this.setLog(`Flash cfg zapsaná ${hex}.`);
-    }
+    const hex = `0x${CFG_PART_ADDR.toString(16)}`;
+    this.setLog(`Zapisuji Wi-Fi/MQTT do oddílu klikcfg ${hex} (obejdu NVS)…`);
+    await this.runProcess(espflash, writeBinArgs({ port, address: CFG_PART_ADDR, file }));
+    this.setLog(`Oddíl klikcfg zapsaný ${hex}.`);
   }
 
-  async flashUsb({ port, image }) {
+  async flashUsb({ port, image, partitionTable, bootloader }) {
     const espflash = await this.ensureEspflash();
     const ext = path.extname(image).toLowerCase();
     const base = path.basename(image).toLowerCase();
     let args;
     if (ext === ".elf") {
-      args = ["flash", "--port", port, "--baud", "921600", "--flash-size", "16mb", image];
+      if (partitionTable) {
+        this.setLog(`Tabulka oddílů ${path.basename(partitionTable)} (app0/app1 pro Wi-Fi OTA + klikcfg).`);
+      } else {
+        this.setLog("Bez tabulky oddílů: destička nebude umět Wi-Fi OTA. Dodej klikac_16mb.csv.");
+      }
+      if (bootloader) {
+        this.setLog(`Bootloader ${path.basename(bootloader)} z buildu firmware.`);
+      }
+      args = elfFlashArgs({ port, image, partitionTable, bootloader });
     } else if (base.includes("factory")) {
-      args = ["write-bin", "--port", port, "--baud", "921600", "0x0", image];
+      args = writeBinArgs({ port, address: 0x0, file: image });
     } else {
-      args = ["write-bin", "--port", port, "--baud", "921600", "0x10000", image];
+      args = writeBinArgs({ port, address: 0x10000, file: image });
     }
     await this.runProcess(espflash, args);
   }

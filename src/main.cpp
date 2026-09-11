@@ -85,6 +85,8 @@ static char serial_line[220];
 static size_t serial_len = 0;
 
 #define CFG_FLASH_MAGIC 0x3146474Bu
+#define CFG_PART_LABEL "klikcfg"
+// Adresy, kam cfg psaly verze do 1.1.3. Už se na ně jen čte (migrace).
 #define CFG_FLASH_ADDR 0x200000u
 #define CFG_FLASH_ADDR_ALT 0x3F0000u
 #define CFG_FLASH_ADDR_LEGACY 0xFFF000u
@@ -801,38 +803,75 @@ static bool cfg_apply_blob(const CfgFlash *blob) {
     return true;
 }
 
-static const uint32_t kCfgFlashAddrs[] = {
-    CFG_FLASH_ADDR,
-    CFG_FLASH_ADDR_ALT,
+static bool cfg_blob_is_current(const CfgFlash *blob) {
+    return blob->magic == CFG_FLASH_MAGIC
+        && blob->sum == cfg_flash_sum(blob)
+        && strcmp(blob->wifi, wifi_ssid) == 0
+        && strcmp(blob->pass, wifi_pass) == 0
+        && strcmp(blob->mqtt, mqtt_host) == 0;
+}
+
+static const uint32_t kCfgLegacyAddrs[] = {
     CFG_FLASH_ADDR_LEGACY,
+    CFG_FLASH_ADDR_ALT,
+    CFG_FLASH_ADDR,
 };
 
-static uint32_t cfg_flash_used_end() {
-    const uint32_t sketch = (ESP.getSketchSize() + 4095u) & ~4095u;
-    return 0x10000u + sketch + 4096u;
+static const char *cfg_src = "none";
+
+static const esp_partition_t *cfg_partition() {
+    static const esp_partition_t *part = NULL;
+    static bool searched = false;
+    if (!searched) {
+        searched = true;
+        part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, CFG_PART_LABEL);
+        if (part) {
+            Serial.print("KLOG cfg-part 0x");
+            Serial.println(part->address, HEX);
+        } else {
+            Serial.println("KLOG cfg-part-missing");
+        }
+    }
+    return part;
 }
 
-static bool cfg_addr_after_app(uint32_t addr) {
-    return addr >= cfg_flash_used_end();
+// Zápis do sektoru, který patří běžící aplikaci, ESP-IDF ukončí abort(). Bez
+// oddílu klikcfg (destičky nahrané starší verzí) proto hledáme sektor mimo
+// všechny oddíly z tabulky.
+static bool cfg_sector_free(uint32_t addr) {
+    bool free_sector = true;
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    while (it != NULL) {
+        const esp_partition_t *p = esp_partition_get(it);
+        if (p && addr < p->address + p->size && p->address < addr + 4096u) {
+            free_sector = false;
+        }
+        it = esp_partition_next(it);
+    }
+    return free_sector;
 }
 
-static uint32_t cfg_safe_flash_addr() {
+static uint32_t cfg_flash_size() {
     uint32_t size = 0;
-    if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 8192) {
+    if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 0x100000u) {
         size = 0x1000000u;
     }
-    const uint32_t used = cfg_flash_used_end();
-    Serial.print("KLOG flash-size 0x");
-    Serial.print(size, HEX);
-    Serial.print(" used-end 0x");
-    Serial.println(used, HEX);
-    for (size_t i = 0; i < sizeof(kCfgFlashAddrs) / sizeof(kCfgFlashAddrs[0]); i++) {
-        const uint32_t addr = kCfgFlashAddrs[i];
-        if (addr + 4096u <= size && cfg_addr_after_app(addr)) {
+    return size;
+}
+
+static uint32_t cfg_raw_addr() {
+    const uint32_t size = cfg_flash_size();
+    for (size_t i = 0; i < sizeof(kCfgLegacyAddrs) / sizeof(kCfgLegacyAddrs[0]); i++) {
+        const uint32_t addr = kCfgLegacyAddrs[i];
+        if (addr + 4096u <= size && cfg_sector_free(addr)) {
             return addr;
         }
     }
-    Serial.println("KLOG flash-no-addr");
+    const uint32_t tail = (size - 4096u) & ~4095u;
+    if (cfg_sector_free(tail)) {
+        return tail;
+    }
+    Serial.println("KLOG cfg-no-raw");
     return 0;
 }
 
@@ -872,76 +911,100 @@ static bool cfg_nvs_write_and_verify() {
     Serial.print((int)ec);
     Serial.print(" get=");
     Serial.println((int)gw);
-    const bool ok = e1 == ESP_OK && ec == ESP_OK && gw == ESP_OK && cfg_apply_blob(&readback)
-        && strcmp(readback.wifi, wifi_ssid) == 0 && strcmp(readback.mqtt, mqtt_host) == 0;
-    Serial.print("KLOG saved wifi=");
+    const bool ok = e1 == ESP_OK && ec == ESP_OK && gw == ESP_OK && cfg_blob_is_current(&readback);
+    Serial.print("KLOG nvs-saved wifi=");
     Serial.println(ok ? readback.wifi : "(empty)");
-    Serial.print("KLOG saved mqtt=");
+    Serial.print("KLOG nvs-saved mqtt=");
     Serial.println(ok ? readback.mqtt : "(empty)");
     return ok;
 }
 
-static bool cfg_flash_matches() {
-    const uint32_t addr = cfg_safe_flash_addr();
-    if (!addr) {
+static bool cfg_part_write(const CfgFlash *blob) {
+    const esp_partition_t *part = cfg_partition();
+    if (!part) {
         return false;
     }
-    CfgFlash blob;
-    memset(&blob, 0, sizeof(blob));
-    if (esp_flash_read(NULL, &blob, addr, sizeof(blob)) != ESP_OK) {
+    if (part->size < sizeof(*blob)) {
+        Serial.println("KLOG cfg-part-small");
         return false;
     }
-    return cfg_apply_blob(&blob)
-        && strcmp(blob.wifi, wifi_ssid) == 0
-        && strcmp(blob.mqtt, mqtt_host) == 0;
-}
-
-static bool cfg_flash_write_and_verify() {
-    const uint32_t addr = cfg_safe_flash_addr();
-    if (!addr) {
-        Serial.println("KLOG flash-no-addr");
-        return false;
-    }
-    if (cfg_flash_matches()) {
-        Serial.println("KLOG flash-already");
-        return true;
-    }
-    Serial.print("KLOG flash-addr 0x");
-    Serial.println(addr, HEX);
-    Serial.print("KLOG flash-write n=");
-    Serial.print((int)strlen(wifi_ssid));
-    Serial.print("/");
-    Serial.println((int)strlen(mqtt_host));
-    CfgFlash blob;
-    cfg_fill_blob(&blob);
-    esp_err_t err = esp_flash_erase_region(NULL, addr, 4096);
+    esp_err_t err = esp_partition_erase_range(part, 0, part->size);
     if (err != ESP_OK) {
-        Serial.print("KLOG flash-erase ");
+        Serial.print("KLOG cfg-part-erase ");
         Serial.println((int)err);
         return false;
     }
-    err = esp_flash_write(NULL, &blob, addr, sizeof(blob));
+    err = esp_partition_write(part, 0, blob, sizeof(*blob));
     if (err != ESP_OK) {
-        Serial.print("KLOG flash-write ");
+        Serial.print("KLOG cfg-part-write ");
+        Serial.println((int)err);
+        return false;
+    }
+    CfgFlash readback;
+    memset(&readback, 0, sizeof(readback));
+    err = esp_partition_read(part, 0, &readback, sizeof(readback));
+    if (err != ESP_OK || !cfg_blob_is_current(&readback)) {
+        Serial.print("KLOG cfg-part-verify e=");
+        Serial.println((int)err);
+        return false;
+    }
+    return true;
+}
+
+static bool cfg_raw_write(const CfgFlash *blob) {
+    const uint32_t addr = cfg_raw_addr();
+    if (!addr) {
+        return false;
+    }
+    Serial.print("KLOG cfg-raw 0x");
+    Serial.println(addr, HEX);
+    esp_err_t err = esp_flash_erase_region(NULL, addr, 4096);
+    if (err != ESP_OK) {
+        Serial.print("KLOG cfg-raw-erase ");
+        Serial.println((int)err);
+        return false;
+    }
+    err = esp_flash_write(NULL, blob, addr, sizeof(*blob));
+    if (err != ESP_OK) {
+        Serial.print("KLOG cfg-raw-write ");
         Serial.println((int)err);
         return false;
     }
     CfgFlash readback;
     memset(&readback, 0, sizeof(readback));
     err = esp_flash_read(NULL, &readback, addr, sizeof(readback));
-    if (err != ESP_OK || !cfg_apply_blob(&readback)) {
-        Serial.print("KLOG flash-read ");
+    if (err != ESP_OK || !cfg_blob_is_current(&readback)) {
+        Serial.print("KLOG cfg-raw-verify e=");
         Serial.println((int)err);
         return false;
     }
-    Serial.print("KLOG flash-saved wifi=");
-    Serial.println(readback.wifi);
-    Serial.print("KLOG flash-saved mqtt=");
-    Serial.println(readback.mqtt);
-    return strcmp(readback.wifi, wifi_ssid) == 0 && strcmp(readback.mqtt, mqtt_host) == 0;
+    return true;
 }
 
-static bool cfg_flash_load_at(uint32_t addr) {
+static bool cfg_part_load() {
+    const esp_partition_t *part = cfg_partition();
+    if (!part) {
+        return false;
+    }
+    CfgFlash blob;
+    memset(&blob, 0, sizeof(blob));
+    const esp_err_t err = esp_partition_read(part, 0, &blob, sizeof(blob));
+    Serial.print("KLOG cfg-part-read e=");
+    Serial.print((int)err);
+    Serial.print(" mag=0x");
+    Serial.println(blob.magic, HEX);
+    if (err != ESP_OK || !cfg_apply_blob(&blob)) {
+        return false;
+    }
+    cfg_src = "part";
+    Serial.print("KLOG cfg-part wifi=");
+    Serial.print(wifi_ssid);
+    Serial.print(" mqtt=");
+    Serial.println(mqtt_host);
+    return true;
+}
+
+static bool cfg_raw_load_at(uint32_t addr) {
     CfgFlash blob;
     memset(&blob, 0, sizeof(blob));
     const esp_err_t err = esp_flash_read(NULL, &blob, addr, sizeof(blob));
@@ -954,6 +1017,7 @@ static bool cfg_flash_load_at(uint32_t addr) {
     if (err != ESP_OK || !cfg_apply_blob(&blob)) {
         return false;
     }
+    cfg_src = "flash";
     Serial.print("KLOG cfg-flash 0x");
     Serial.print(addr, HEX);
     Serial.print(" wifi=");
@@ -963,21 +1027,19 @@ static bool cfg_flash_load_at(uint32_t addr) {
     return true;
 }
 
-static bool cfg_flash_load() {
-    uint32_t size = 0;
-    if (esp_flash_get_size(NULL, &size) != ESP_OK || size < 8192) {
-        size = 0x1000000u;
-    }
-    for (size_t i = 0; i < sizeof(kCfgFlashAddrs) / sizeof(kCfgFlashAddrs[0]); i++) {
-        const uint32_t addr = kCfgFlashAddrs[i];
+static bool cfg_raw_load() {
+    const uint32_t size = cfg_flash_size();
+    for (size_t i = 0; i < sizeof(kCfgLegacyAddrs) / sizeof(kCfgLegacyAddrs[0]); i++) {
+        const uint32_t addr = kCfgLegacyAddrs[i];
         if (addr + 4096u > size) {
             continue;
         }
-        if (cfg_flash_load_at(addr)) {
+        if (cfg_raw_load_at(addr)) {
             return true;
         }
     }
-    return false;
+    const uint32_t tail = (size - 4096u) & ~4095u;
+    return tail != CFG_FLASH_ADDR_LEGACY && cfg_raw_load_at(tail);
 }
 
 static bool cfg_nvs_load() {
@@ -993,6 +1055,7 @@ static bool cfg_nvs_load() {
     size_t n = sizeof(blob);
     if (nvs_get_blob(handle, "cfg", &blob, &n) == ESP_OK && cfg_apply_blob(&blob)) {
         nvs_close(handle);
+        cfg_src = "nvs";
         Serial.print("KLOG cfg-nvs wifi=");
         Serial.print(wifi_ssid);
         Serial.print(" mqtt=");
@@ -1017,6 +1080,7 @@ static bool cfg_nvs_load() {
         strncpy(wifi_pass, p, sizeof(wifi_pass) - 1);
     }
     strncpy(mqtt_host, m, sizeof(mqtt_host) - 1);
+    cfg_src = "nvs";
     Serial.print("KLOG cfg-nvs wifi=");
     Serial.print(wifi_ssid);
     Serial.print(" mqtt=");
@@ -1024,7 +1088,9 @@ static bool cfg_nvs_load() {
     return true;
 }
 
-static bool cfg_save(bool force_flash) {
+// Cfg jde do vlastního oddílu klikcfg. NVS a volný sektor jsou záloha pro
+// destičky s tabulkou oddílů z verzí do 1.1.3, kde klikcfg není.
+static bool cfg_save(bool skip_nvs) {
     if (!wifi_ssid[0] || !mqtt_host[0]) {
         Serial.print("KLOG apply-empty wifi=");
         Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
@@ -1032,39 +1098,54 @@ static bool cfg_save(bool force_flash) {
         Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
         return false;
     }
-    if (force_flash) {
-        Serial.println("KLOG force-flash");
-        if (cfg_flash_matches()) {
-            Serial.println("KLOG flash-already");
-            return true;
-        }
-        if (cfg_flash_write_and_verify()) {
-            cfg_nvs_write_and_verify();
-            return true;
+    Serial.print("KLOG cfg-write n=");
+    Serial.print((int)strlen(wifi_ssid));
+    Serial.print("/");
+    Serial.println((int)strlen(mqtt_host));
+    CfgFlash blob;
+    cfg_fill_blob(&blob);
+    const char *dst = NULL;
+    if (cfg_part_write(&blob)) {
+        dst = "part";
+    } else if (!skip_nvs && cfg_nvs_write_and_verify()) {
+        dst = "nvs";
+    } else if (cfg_raw_write(&blob)) {
+        dst = "flash";
+    } else if (!skip_nvs) {
+        Serial.println("KLOG nvs-erase");
+        nvs_flash_erase();
+        nvs_flash_init();
+        if (cfg_nvs_write_and_verify()) {
+            dst = "nvs";
         }
     }
-    if (cfg_nvs_write_and_verify()) {
-        if (!cfg_flash_matches()) {
-            Serial.println("KLOG flash-mirror");
-            cfg_flash_write_and_verify();
-        }
-        return true;
+    if (!dst) {
+        return false;
     }
-    Serial.println("KLOG flash-fallback");
-    if (cfg_flash_write_and_verify()) {
-        return true;
-    }
-    Serial.println("KLOG nvs-erase");
-    nvs_flash_erase();
-    nvs_flash_init();
-    return cfg_nvs_write_and_verify();
+    cfg_src = dst;
+    Serial.print("KLOG cfg-dst ");
+    Serial.println(dst);
+    Serial.print("KLOG saved wifi=");
+    Serial.println(wifi_ssid);
+    Serial.print("KLOG saved mqtt=");
+    Serial.println(mqtt_host);
+    return true;
 }
 
 static void cfg_load() {
     wifi_ssid[0] = 0;
     wifi_pass[0] = 0;
     mqtt_host[0] = 0;
-    if (cfg_flash_load() || cfg_nvs_load()) {
+    if (cfg_part_load()) {
+        return;
+    }
+    if (cfg_nvs_load() || cfg_raw_load()) {
+        CfgFlash blob;
+        cfg_fill_blob(&blob);
+        if (cfg_part_write(&blob)) {
+            cfg_src = "part";
+            Serial.println("KLOG cfg-migrated");
+        }
         return;
     }
     Serial.println("KLOG cfg-none");
@@ -1095,6 +1176,8 @@ static void cfg_handle_line(char *line) {
     if (strcmp(line, "KCFG STATUS") == 0) {
         Serial.print("KLOG fw=");
         Serial.println(FIRMWARE_VERSION);
+        Serial.print("KLOG cfg-store ");
+        Serial.println(cfg_src);
         Serial.print("KLOG wifi=");
         Serial.println(wifi_ssid[0] ? wifi_ssid : "(empty)");
         Serial.print("KLOG mqtt=");
@@ -1108,8 +1191,8 @@ static void cfg_handle_line(char *line) {
         return;
     }
     if (strcmp(line, "KCFG APPLY") == 0 || strcmp(line, "KCFG FORCE") == 0) {
-        const bool force_flash = strcmp(line, "KCFG FORCE") == 0;
-        const bool ok = cfg_save(force_flash);
+        const bool skip_nvs = strcmp(line, "KCFG FORCE") == 0;
+        const bool ok = cfg_save(skip_nvs);
         Serial.print("KLOG apply wifi=");
         Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
         Serial.print(" mqtt=");

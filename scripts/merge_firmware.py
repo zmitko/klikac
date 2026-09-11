@@ -46,6 +46,21 @@ def main():
     dest_bin.write_bytes(firmware.read_bytes())
     if elf.is_file():
         dest_elf.write_bytes(elf.read_bytes())
+    # Klikač posílá tuhle tabulku espflashi (--partition-table), aby destička
+    # dostala app0/app1 pro Wi-Fi OTA a sektor klikcfg na Wi-Fi/MQTT.
+    part_csv = ROOT / "partitions" / "klikac_16mb.csv"
+    if part_csv.is_file():
+        (OUT_DIR / part_csv.name).write_bytes(part_csv.read_bytes())
+    # Bootloader z tohoto buildu. Bez něj by espflash zapsal svůj vlastní, z jiné
+    # verze ESP-IDF než aplikace.
+    if bootloader:
+        (OUT_DIR / "bootloader.bin").write_bytes(bootloader.read_bytes())
+    # boot_app0 nastaví otadata na app0. Bez něj by destička s app0/app1 mohla
+    # po přeflashnutí bootovat starý obsah druhého slotu.
+    boot_app0 = first_existing([
+        Path.home() / ".platformio" / "packages" / "framework-arduinoespressif32"
+        / "tools" / "partitions" / "boot_app0.bin",
+    ])
     if bootloader and partitions:
         factory = OUT_DIR / "firmware-factory.bin"
         cmd = [
@@ -66,6 +81,10 @@ def main():
             str(bootloader),
             "0x8000",
             str(partitions),
+        ]
+        if boot_app0:
+            cmd += ["0xe000", str(boot_app0)]
+        cmd += [
             "0x10000",
             str(firmware),
         ]
@@ -79,6 +98,8 @@ def main():
             "firmwareBin": "firmware.bin",
             "firmwareElf": "firmware.elf" if elf.is_file() else "",
             "factory": "firmware-factory.bin" if (OUT_DIR / "firmware-factory.bin").is_file() else "",
+            "partitionCsv": part_csv.name if part_csv.is_file() else "",
+            "bootloader": "bootloader.bin" if (OUT_DIR / "bootloader.bin").is_file() else "",
         },
     }
     (OUT_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

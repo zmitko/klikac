@@ -114,6 +114,8 @@ async function fetchLatestRelease() {
     firmwareBinUrl: assetUrl(data, ["firmware.bin"]),
     firmwareElfUrl: assetUrl(data, ["firmware.elf"]),
     factoryUrl: assetUrl(data, ["firmware-factory.bin"]),
+    partitionCsvUrl: assetUrl(data, ["klikac_16mb.csv"]),
+    bootloaderUrl: assetUrl(data, ["bootloader.bin"]),
     espflashUrl: assetUrl(data, ["espflash.exe"]),
     manifestUrl: assetUrl(data, ["manifest.json"]),
     raw: data,

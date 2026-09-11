@@ -81,6 +81,12 @@ Stejný postup, jen native USB necháš v PC1 místo PC2. Programovací CH343 a 
 
 Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat firmware (Wi-Fi)**. Klikač pošle novou verzi po síti (ArduinoOTA, případně stažení přes MQTT).
 
+Wi‑Fi OTA potřebuje dva app sloty v tabulce oddílů (viz [Tabulka oddílů](#tabulka-oddílů)).
+Destičky nahrané Klikačem **1.1.3 a starším** je nemají, tam Wi‑Fi OTA nemá kam zapsat —
+takové destičce dej **jednou** firmware přes USB z Klikače 1.1.4+ (s **Vynutit zápis**)
+a Wi‑Fi OTA pak funguje. Poznáš to v protokolu po **Číst destičku**: `KLOG cfg-part-missing`
+znamená starou tabulku, `cfg=part` novou.
+
 ### Když to neběží
 
 | Co vidíš | Co zkontrolovat |
@@ -89,6 +95,8 @@ Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat fir
 | **Destička offline**, broker IP sedí | stejná Wi‑Fi, firewall 1883, znovu USB init (Wi‑Fi/IP v destičce) |
 | MQTT online, ale nic se nepíše | native USB je v **PC2**, ne jen CH343 v PC1 |
 | Windows nevidí `USB Input` | špatný kabel/port — HID je OTG, ne UART |
+| Po Wi‑Fi OTA se destička odmlčela | stará tabulka oddílů bez app slotů — nahraj jednou přes USB (**Vynutit zápis**) |
+| `KLOG nvs-fail`, destička nezapamatuje Wi‑Fi | firmware do 1.1.3 psal cfg do běžící aplikace a skončil `abort()`; nahraj 1.1.4+ přes USB |
 
 ## Co umí aplikace
 
@@ -198,14 +206,33 @@ Přihlášení je v kódu napevno (`klikac` / `klikac`) — počítá se s tím,
 - programovací USB: CH343 / CH340 (COM)
 - HID: native USB (CDC na bootu je vypnuté)
 
+## Tabulka oddílů
+
+[`partitions/klikac_16mb.csv`](partitions/klikac_16mb.csv) používá PlatformIO i Klikač
+(posílá ji espflashi jako `--partition-table`), takže destička má vždycky stejný layout:
+
+| Oddíl | Offset | K čemu |
+| --- | --- | --- |
+| `nvs` | `0x9000` | ESP-IDF, záložní uložení cfg |
+| `otadata` | `0xE000` | ze kterého app slotu se bootuje |
+| `app0` / `app1` | `0x10000` / `0x510000` | dva sloty — bez nich nejde Wi‑Fi OTA |
+| `klikcfg` | `0xA10000` | 4 KB sektor s Wi‑Fi/MQTT (adresu drží i `desktop/lib/cfgFlashBlob.js`) |
+| `coredump` | `0xA11000` | pád destičky se má kam uložit |
+
+Wi‑Fi a IP brokeru jdou do `klikcfg`, ne do těla aplikace. Zápis do sektoru běžící
+aplikace ESP-IDF ukončí `abort()` — přesně to dělaly verze do 1.1.3, kde cfg mířila
+na `0x200000`. Když oddíl `klikcfg` chybí (stará destička), firmware hledá volný
+sektor mimo všechny oddíly a hlásí `KLOG cfg-part-missing`.
+
 ## Vývoj
 
-Verze je v souboru [`VERSION`](VERSION) (teď `1.1.0`). Tag `v1.1.1` spustí GitHub Actions — NSIS instalátor + firmware. Wi‑Fi se do binárky nepeče.
+Verze je v souboru [`VERSION`](VERSION) (teď `1.1.4`). Tag `v1.1.4` spustí GitHub Actions — NSIS instalátor + firmware. Wi‑Fi se do binárky nepeče.
 
 ```text
 desktop/            Klikač (Electron)
 desktop/lib/macro/  jazyk V2: parser -> AST -> validator -> compiler -> runtime
 desktop/test/       testy makro vrstvy (node --test)
+partitions/         tabulka oddílů destičky (PlatformIO i espflash)
 src/                firmware
 include/            config + secrets (prázdné, Wi-Fi jde z appky)
 ha/                 starý Home Assistant PoC, k provozu se nepoužívá

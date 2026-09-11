@@ -1,0 +1,12 @@
+# Klikač ESP32-S3 N16R8 (16 MB).
+# app0/app1 = dva sloty, bez nich Wi-Fi OTA nemá kam zapsat.
+# klikcfg = vlastní sektor na Wi-Fi/MQTT. Musí ležet mimo app sloty,
+# jinak zápis skončí abort() (ESP-IDF hlídá zápis do běžící aplikace).
+# Offset klikcfg drží i desktop v desktop/lib/cfgFlashBlob.js (CFG_PART_ADDR).
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x500000,
+app1,       app,  ota_1,    0x510000, 0x500000,
+klikcfg,    data, undefined, 0xA10000, 0x1000,
+coredump,   data, coredump, 0xA11000, 0x10000,

@@ -26,12 +26,16 @@ function lastMatch(text, re) {
 function interpretDiagnose(lines) {
   const text = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
   const firmware = lastMatch(text, /klikac firmware\s+(\S+)/g) || lastMatch(text, /KLOG fw=(\S+)/g);
-  const wifi = lastMatch(text, /KLOG wifi=(.+)$/gm) || lastMatch(text, /KLOG cfg-flash wifi=(.+) mqtt=/gm);
+  const wifi = lastMatch(text, /KLOG wifi=(.+)$/gm) || lastMatch(text, /KLOG cfg-(?:flash 0x\S+|part) wifi=(.+) mqtt=/gm);
   const mqtt = lastMatch(text, /KLOG mqtt=(.+)$/gm);
   const wifiSta = lastMatch(text, /KLOG wifi-sta=(\d+)/g);
   const wifiIp = lastMatch(text, /KLOG wifi-ip=(\S+)/g);
   const mqttRc = lastMatch(text, /(?:MQTT failed, rc=|KLOG mqtt-rc=)(-?\d+)/g);
   const mqttOk = /MQTT connected/.test(text);
+  const cfgStore = lastMatch(text, /KLOG cfg-store (\S+)/g);
+  // Destičky nahrané verzí do 1.1.3 mají tabulku oddílů bez klikcfg (a bez
+  // slotů pro Wi-Fi OTA). Zachrání je jen jedno nahrání přes USB.
+  const oldPartitions = /KLOG cfg-part-missing/.test(text);
   const emptyWifi = !wifi || wifi === "(empty)" || /Wi-Fi čeká na USB/.test(text);
   const noBanner = /KLOG no-banner/.test(text) || !/klikac firmware/.test(text);
 
@@ -39,11 +43,15 @@ function interpretDiagnose(lines) {
   if (noBanner) {
     hint = "Destička na COM nemluví. Programovací USB (CH343), ne HID. Případně drž BOOT.";
   } else if (emptyWifi) {
-    if (/KLOG cfg-none|KLOG flash-try/.test(text)) {
-      hint = "Firmware běží, ale cfg ve flash nenašel (wifi prázdná). Zkus znovu Vynutit zápis v nové verzi Klikače — cfg se píše na 0x200000, ne jen na konec flash.";
+    if (oldPartitions) {
+      hint = "Destička má starou tabulku oddílů (chybí klikcfg), proto se Wi-Fi neuloží a Wi-Fi OTA nefunguje. Nech COM zapojený a dej USB inicializaci s Vynutit zápis — nahraje se firmware i tabulka oddílů.";
+    } else if (/KLOG cfg-none|KLOG flash-try|KLOG cfg-part-read/.test(text)) {
+      hint = "Firmware běží, ale cfg v oddílu klikcfg nenašel (wifi prázdná). Dej USB inicializaci s Vynutit zápis, COM nech zapojený.";
     } else {
       hint = "V destičce není Wi-Fi. Force zápis na COM a nech kabel, dokud v logu nebude „destička na brokeru“.";
     }
+  } else if (oldPartitions) {
+    hint = "Destička jede se starou tabulkou oddílů (chybí klikcfg i sloty pro Wi-Fi OTA). Wi-Fi má, ale příští firmware jí dej přes USB s Vynutit zápis.";
   } else if (wifiSta === "1") {
     hint = `SSID „${wifi}“ destička nevidí. Musí to být 2,4 GHz (ne 5 GHz, ne host), stejný název včetně apostrofu.`;
   } else if (wifiSta === "4") {
@@ -65,6 +73,8 @@ function interpretDiagnose(lines) {
     wifiIp: wifiIp && wifiIp !== "0.0.0.0" ? wifiIp : "",
     mqttRc,
     mqttOk,
+    cfgStore,
+    oldPartitions,
     emptyWifi,
     noBanner,
     hint,

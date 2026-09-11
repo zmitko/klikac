@@ -11,5 +11,5 @@ version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 pkg_path = ROOT / "desktop" / "package.json"
 pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
 pkg["version"] = version
-pkg_path.write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
+pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 print(version)

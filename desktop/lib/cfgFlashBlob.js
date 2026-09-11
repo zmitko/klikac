@@ -1,5 +1,10 @@
 // Same packed layout as CfgFlash in src/main.cpp (little-endian).
 const CFG_FLASH_MAGIC = 0x3146474b;
+// Oddíl klikcfg z partitions/klikac_16mb.csv. Musí souhlasit s CSV, jinak
+// zápis skončí mimo oddíl a firmware cfg nenajde.
+const CFG_PART_LABEL = "klikcfg";
+const CFG_PART_ADDR = 0xa10000;
+// Adresy, kam cfg psaly verze do 1.1.3. Firmware je čte kvůli migraci.
 const CFG_FLASH_ADDR = 0x200000;
 const CFG_FLASH_ADDRS = [0x200000, 0x3f0000, 0xfff000];
 const WIFI_LEN = 36;
@@ -60,6 +65,8 @@ function parseCfgFlash(buf) {
 
 module.exports = {
   CFG_FLASH_MAGIC,
+  CFG_PART_LABEL,
+  CFG_PART_ADDR,
   CFG_FLASH_ADDR,
   CFG_FLASH_ADDRS,
   BLOB_SIZE,
