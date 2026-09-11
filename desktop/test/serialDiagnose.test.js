@@ -62,6 +62,40 @@ test("diagnose: stará tabulka oddílů bez klikcfg", () => {
   assert.match(r.hint, /starou tabulku oddílů/);
 });
 
+// Klikač 1.1.4 tvrdil „Wi-Fi bere, MQTT ne“ i při sta=6 a IP 0.0.0.0, protože
+// se spokojil s řádkem „Wi-Fi boot“. Bez IP destička na síti není.
+test("diagnose: cfg je v klikcfg, ale Wi-Fi se nepřipojila", () => {
+  const r = interpretDiagnose([
+    "klikac firmware 1.1.4",
+    "KLOG cfg-part 0xA10000",
+    "KLOG cfg-part wifi=J'cob Route mqtt=192.168.0.101",
+    "KLOG wifi=J'cob Route",
+    "KLOG mqtt=192.168.0.101",
+    "Wi-Fi boot J'cob Route",
+    "KLOG cfg-store part",
+    "KLOG wifi-sta=6",
+    "KLOG wifi-ip=0.0.0.0",
+    "KLOG mqtt-rc=-1",
+  ]);
+  assert.equal(r.cfgStore, "part");
+  assert.equal(r.wifiIp, "");
+  assert.match(r.hint, /nepřipojila/);
+  assert.doesNotMatch(r.hint, /1883/);
+});
+
+test("diagnose: s IP už je na vině MQTT, ne Wi-Fi", () => {
+  const r = interpretDiagnose([
+    "klikac firmware 1.1.4",
+    "KLOG wifi=home",
+    "KLOG mqtt=192.168.0.101",
+    "KLOG wifi-sta=6",
+    "KLOG wifi-ip=192.168.0.55",
+    "KLOG mqtt-rc=-2",
+  ]);
+  assert.equal(r.wifiIp, "192.168.0.55");
+  assert.match(r.hint, /1883/);
+});
+
 test("diagnose: KCFG STATUS řekne, kde cfg leží", () => {
   const r = interpretDiagnose([
     "klikac firmware 1.1.4",

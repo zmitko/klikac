@@ -38,6 +38,8 @@ function interpretDiagnose(lines) {
   const oldPartitions = /KLOG cfg-part-missing/.test(text);
   const emptyWifi = !wifi || wifi === "(empty)" || /Wi-Fi čeká na USB/.test(text);
   const noBanner = /KLOG no-banner/.test(text) || !/klikac firmware/.test(text);
+  // Bez IP destička na síti není, i když už Wi-Fi zkoušela nastartovat.
+  const hasIp = !!wifiIp && wifiIp !== "0.0.0.0";
 
   let hint;
   if (noBanner) {
@@ -58,8 +60,13 @@ function interpretDiagnose(lines) {
     hint = `Síť „${wifi}“ destičku odmítla — špatné heslo, nebo je to 5 GHz se stejným jménem.`;
   } else if (mqttOk) {
     hint = "Destička už je na MQTT. COM můžeš odpojit a HID dát do herního PC.";
-  } else if (wifiSta === "3" || /Wi-Fi (boot|start|after-usb|reconnect) /.test(text)) {
-    hint = `Wi-Fi bere, MQTT na ${mqtt || "?"} ne. Zkontroluj IP PC1 (ipconfig) a firewall port 1883.`;
+  } else if (hasIp || wifiSta === "3") {
+    hint = `Wi-Fi bere (IP ${wifiIp || "?"}), MQTT na ${mqtt || "?"} ne. Zkontroluj, že ${mqtt || "ta IP"} je IP PC s Klikačem (ipconfig) a že je na PC1 povolený port 1883.`;
+  } else if (wifiSta === "255") {
+    hint = "Firmware ještě nezkusil Wi-Fi (sta=255). Nech COM zapojený, dej reset destičky a čti znovu.";
+  } else if (wifiSta) {
+    // sta 0/2/5/6: SSID i heslo destička má, ale k síti se nepřipojila a nemá IP.
+    hint = `Destička se na „${wifi}“ nepřipojila (sta=${wifiSta} ${WIFI_STA[wifiSta] || "?"}, bez IP). Ověř, že je to 2,4 GHz síť toho domu (ne 5 GHz ani host), SSID přesně včetně apostrofu, správné heslo a že router nemá jen WPA3 nebo filtr MAC adres.`;
   } else {
     hint = "Destička má cfg, ale na Wi-Fi/MQTT ještě nedorazila. Nech COM 20 s a čti znovu.";
   }
@@ -70,7 +77,7 @@ function interpretDiagnose(lines) {
     mqtt: mqtt === "(empty)" ? "" : mqtt,
     wifiSta,
     wifiStaLabel: WIFI_STA[wifiSta] || "",
-    wifiIp: wifiIp && wifiIp !== "0.0.0.0" ? wifiIp : "",
+    wifiIp: hasIp ? wifiIp : "",
     mqttRc,
     mqttOk,
     cfgStore,
