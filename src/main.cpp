@@ -810,7 +810,7 @@ static void wifi_begin_now(const char *why) {
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
-    WiFi.setTxPower(WIFI_POWER_11dBm);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     if (wifi_begin_at) {
         WiFi.disconnect(false, false);
         delay(50);
@@ -911,6 +911,17 @@ void setup() {
     Serial.print("KLOG mqtt=");
     Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
 
+    snprintf(mqtt_client_id, sizeof(mqtt_client_id), MQTT_CLIENT_ID_PREFIX "%04X", (uint16_t)(ESP.getEfuseMac() & 0xFFFF));
+    wifi_start_at = millis() + WIFI_START_DELAY_MS;
+    last_wifi_attempt = 0;
+    wifi_begin_at = 0;
+    wifi_armed_at = 0;
+    if (wifi_ssid[0]) {
+        wifi_begin_now("boot");
+    } else {
+        Serial.println("Wi-Fi čeká na USB inicializaci (KCFG)");
+    }
+
     USB.onEvent(usb_event);
     USB.VID(USB_DEVICE_VID);
     USB.PID(USB_DEVICE_PID);
@@ -922,23 +933,12 @@ void setup() {
     Keyboard.begin();
     Mouse.begin();
     USB.begin();
-    Keyboard.releaseAll();
-    mouse_release_all();
     Serial.println("USB HID keyboard+mouse started");
-
-    snprintf(mqtt_client_id, sizeof(mqtt_client_id), MQTT_CLIENT_ID_PREFIX "%04X", (uint16_t)(ESP.getEfuseMac() & 0xFFFF));
-
-    wifi_start_at = millis() + WIFI_START_DELAY_MS;
-    last_wifi_attempt = 0;
-    wifi_begin_at = 0;
-    wifi_armed_at = 0;
-    if (!wifi_ssid[0]) {
-        Serial.println("Wi-Fi čeká na USB inicializaci (KCFG)");
-    }
 }
 
 void loop() {
     if (usb_needs_release || keys_need_abort || macro_stop_req) {
+        const bool hid_ok = usb_mounted && !usb_needs_release;
         usb_needs_release = false;
         keys_need_abort = false;
         macro_stop_req = false;
@@ -946,8 +946,10 @@ void loop() {
         pending_mouse = 0;
         pending_enter = false;
         macros_clear();
-        Keyboard.releaseAll();
-        mouse_release_all();
+        if (hid_ok) {
+            Keyboard.releaseAll();
+            mouse_release_all();
+        }
     }
 
     serial_poll();
