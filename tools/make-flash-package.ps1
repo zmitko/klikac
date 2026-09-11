@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$FromRelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,7 @@ $OutDir = Join-Path $RepoRoot "dist\esp32-flash"
 $CacheDir = Join-Path $RepoRoot "tools\cache"
 $TemplateDir = Join-Path $RepoRoot "tools\flash-package"
 $BootApp0 = Join-Path $env:USERPROFILE ".platformio\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin"
+$Version = (Get-Content (Join-Path $RepoRoot "VERSION") -Raw).Trim()
 
 function Get-Pio {
     $cmd = Get-Command pio -ErrorAction SilentlyContinue
@@ -23,7 +25,7 @@ function Get-Pio {
     if (Test-Path $fallback) {
         return $fallback
     }
-    throw "PlatformIO (pio) neni v PATH. Nainstaluj PlatformIO a spust znovu."
+    return $null
 }
 
 function Invoke-PioBuild {
@@ -35,24 +37,67 @@ function Invoke-PioBuild {
     }
 }
 
+function Get-LanIPv4 {
+    try {
+        $row = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -like "192.168.*" -and -not $_.IPAddress.StartsWith("192.168.56.") } |
+            Select-Object -First 1
+        if ($row) { return $row.IPAddress }
+    } catch {}
+    return "192.168.1.109"
+}
+
+function Get-ReleaseFirmware {
+    $fwDir = Join-Path $CacheDir "release-$Version"
+    New-Item -ItemType Directory -Force -Path $fwDir | Out-Null
+    $files = @("firmware.bin", "firmware-factory.bin")
+    foreach ($name in $files) {
+        $dest = Join-Path $fwDir $name
+        if (Test-Path $dest) { continue }
+        $url = "https://github.com/zmitko/klikac/releases/download/v$Version/$name"
+        Write-Host "Stahuji $name z GitHub v$Version ..."
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    }
+    return $fwDir
+}
+
 New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
 
-if (-not $SkipBuild) {
-    Invoke-PioBuild -ProjectDir $RepoRoot -PioExe (Get-Pio)
-}
-
-$required = @(
-    (Join-Path $BuildDir "firmware.bin"),
-    (Join-Path $BuildDir "bootloader.bin"),
-    (Join-Path $BuildDir "partitions.bin")
-)
-foreach ($file in $required) {
-    if (-not (Test-Path $file)) {
-        throw "Chybi $file. Spust bez -SkipBuild."
+$useRelease = [bool]$FromRelease
+$pio = $null
+if (-not $useRelease -and -not $SkipBuild) {
+    $pio = Get-Pio
+    if ($pio) {
+        Invoke-PioBuild -ProjectDir $RepoRoot -PioExe $pio
+    } else {
+        Write-Host "PlatformIO neni, beru firmware z GitHub release v$Version."
+        $useRelease = $true
     }
 }
-if (-not (Test-Path $BootApp0)) {
-    throw "Chybi boot_app0.bin: $BootApp0"
+
+$factorySrc = $null
+$firmwareSrc = $null
+$bootloaderSrc = $null
+$partitionsSrc = $null
+$haveFour = $false
+
+if (-not $useRelease) {
+    $firmwareSrc = Join-Path $BuildDir "firmware.bin"
+    $bootloaderSrc = Join-Path $BuildDir "bootloader.bin"
+    $partitionsSrc = Join-Path $BuildDir "partitions.bin"
+    $haveFour = (Test-Path $firmwareSrc) -and (Test-Path $bootloaderSrc) -and (Test-Path $partitionsSrc) -and (Test-Path $BootApp0)
+    $merged = Join-Path $RepoRoot "dist-firmware\firmware-factory.bin"
+    if (Test-Path $merged) { $factorySrc = $merged }
+}
+
+if (-not $haveFour -or $useRelease) {
+    $rel = Get-ReleaseFirmware
+    $factorySrc = Join-Path $rel "firmware-factory.bin"
+    $firmwareSrc = Join-Path $rel "firmware.bin"
+    $haveFour = $false
+    if (-not (Test-Path $factorySrc)) {
+        throw "Chybi firmware-factory.bin. Spust sestaveni nebo zkontroluj GitHub release v$Version."
+    }
 }
 
 $zipPath = Join-Path $CacheDir "esptool-v4.8.1-win64.zip"
@@ -81,31 +126,58 @@ if (Test-Path $OutDir) {
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "firmware") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "tools") | Out-Null
 
-Copy-Item (Join-Path $BuildDir "firmware.bin") (Join-Path $OutDir "firmware\firmware.bin")
-Copy-Item (Join-Path $BuildDir "bootloader.bin") (Join-Path $OutDir "firmware\bootloader.bin")
-Copy-Item (Join-Path $BuildDir "partitions.bin") (Join-Path $OutDir "firmware\partitions.bin")
-Copy-Item $BootApp0 (Join-Path $OutDir "firmware\boot_app0.bin")
+if ($haveFour) {
+    Copy-Item $firmwareSrc (Join-Path $OutDir "firmware\firmware.bin")
+    Copy-Item $bootloaderSrc (Join-Path $OutDir "firmware\bootloader.bin")
+    Copy-Item $partitionsSrc (Join-Path $OutDir "firmware\partitions.bin")
+    Copy-Item $BootApp0 (Join-Path $OutDir "firmware\boot_app0.bin")
+}
+if ($factorySrc -and (Test-Path $factorySrc)) {
+    Copy-Item $factorySrc (Join-Path $OutDir "firmware\firmware-factory.bin")
+}
 Copy-Item $esptoolExe.FullName (Join-Path $OutDir "tools\esptool.exe")
 Copy-Item (Join-Path $TemplateDir "flash.ps1") (Join-Path $OutDir "flash.ps1") -Force
 Copy-Item (Join-Path $TemplateDir "nahrat-firmware.bat") (Join-Path $OutDir "nahrat-firmware.bat") -Force
+Copy-Item (Join-Path $TemplateDir "klikac.cfg.example") (Join-Path $OutDir "klikac.cfg.example") -Force
+if (Test-Path (Join-Path $TemplateDir "sledovat-desticku.bat")) {
+    Copy-Item (Join-Path $TemplateDir "sledovat-desticku.bat") (Join-Path $OutDir "sledovat-desticku.bat") -Force
+}
+if (Test-Path (Join-Path $TemplateDir "sledovat.ps1")) {
+    Copy-Item (Join-Path $TemplateDir "sledovat.ps1") (Join-Path $OutDir "sledovat.ps1") -Force
+}
 
-# PowerShell 5.1 on Czech Windows treats UTF-8 without BOM as CP1250 and breaks the script.
 $utf8Bom = New-Object System.Text.UTF8Encoding $true
 $ps1Dest = Join-Path $OutDir "flash.ps1"
 [System.IO.File]::WriteAllText($ps1Dest, [System.IO.File]::ReadAllText($ps1Dest), $utf8Bom)
 
+$mqtt = Get-LanIPv4
+$cfgSrc = Join-Path $TemplateDir "klikac.cfg"
+if (Test-Path $cfgSrc) {
+    Copy-Item $cfgSrc (Join-Path $OutDir "klikac.cfg") -Force
+} else {
+    $cfgText = @"
+# Wi-Fi desticky a IPv4 PC1, kde bezi Klikač.
+WIFI=ZMITKOVI
+PASS=
+MQTT=$mqtt
+"@
+    [System.IO.File]::WriteAllText((Join-Path $OutDir "klikac.cfg"), $cfgText, $utf8Bom)
+}
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
-$fwSize = (Get-Item (Join-Path $OutDir "firmware\firmware.bin")).Length
 @(
-    "ESP32-S3 keyboard firmware",
+    "Klikač desticka $Version",
     "Sestaveno: $stamp",
-    "firmware.bin: $fwSize B",
     "",
-    "Na cilovem PC:",
-    "  1. Zapoj programovaci USB (CH343 / UART). HID muze zustat v hernim PC.",
-    "  2. Spust nahrat-firmware.bat",
-    "  3. Kdyz Windows nenasel port: nahrat-firmware.bat list",
-    "     pak treba: nahrat-firmware.bat COM5",
+    "Na hernim PC (nahore):",
+    "  1. Uprav klikac.cfg - WIFI, heslo, MQTT = IP PC1 s Klikačem (ted $mqtt)",
+    "  2. Klikač nech bezet na PC1",
+    "  3. COM (CH343) zapoj do TOHOTO PC. HID muze zustat v hernim USB.",
+    "  4. Spust nahrat-firmware.bat",
+    "  5. Az napise, ze ma Wi-Fi v pameti: COM odpoj, HID nech v hernim PC",
+    "",
+    "Kdyz Windows nenasel port: nahrat-firmware.bat list",
+    "pak treba: nahrat-firmware.bat COM5",
     "",
     "Kdyz nahrani hlasi Failed to connect:",
     "  drz BOOT, kratce stiskni RESET, pust BOOT, spust znovu."
@@ -122,4 +194,4 @@ Write-Host "Balicek je hotovy:"
 Write-Host "  $OutDir"
 Write-Host "  $zipOut"
 Write-Host ""
-Write-Host "Zkopiruj slozku nebo ZIP na cilove PC a spust nahrat-firmware.bat"
+Write-Host "Dopln heslo v klikac.cfg, zkopiruj slozku nebo ZIP na herni PC, spust nahrat-firmware.bat"

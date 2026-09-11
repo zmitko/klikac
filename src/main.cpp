@@ -824,7 +824,7 @@ static void wifi_begin_now(const char *why) {
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
-    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
     if (wifi_begin_at) {
         WiFi.disconnect(false, false);
         delay(50);

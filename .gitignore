@@ -10,6 +10,7 @@ secrets.h
 dist/
 dist-firmware/
 tools/cache/
+tools/flash-package/klikac.cfg
 desktop/node_modules/
 desktop/dist/
 desktop/config.json
