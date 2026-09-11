@@ -61,4 +61,4 @@ cards:
         icon: mdi:numeric-5
 
   - type: markdown
-    content: "Aktivní makra `1` nebo `1,3,4` (běží paralelně), pak **Makro běží**. Tokeny: `F1`–`F8`, `ENTER`, `D` (jen RNG), `D5`/`D100` (vteřiny + RNG), `LC`/`LMB` = levé, `RC`/`RMB` = pravé."
+    content: "Aktivní makra `1` nebo `1,3,4` (běží paralelně), pak **Makro běží**. Tokeny: `F1`–`F8`, `0`–`9` (numpad), `+ěščřžýáíé` (horní řada), `ENTER`, `D` (jen RNG), `D5`/`D100` (vteřiny + RNG), `LC`/`LMB` = levé, `RC`/`RMB` = pravé."

@@ -92,7 +92,7 @@ Kabely neměň. Na PC1, když je destička **online**, klikni **Aktualizovat fir
 
 ## Co umí aplikace
 
-- F1–F8, LMB, RMB, Enter
+- F1–F8, numpad 0–9, horní řada +ěščřžýáíé, LMB, RMB, Enter
 - až 5 sekvencí, náhodné prodlevy D min / D max, smyčka
 - přenos kliků myši z PC1 na PC2 (mimo okno Klikače)
 - protokol MQTT / USB
@@ -106,13 +106,15 @@ Tokeny v sekvenci (čárkou):
 | Token | Význam |
 | --- | --- |
 | `F1` … `F8` | F-klávesa |
+| `0` … `9` | numerická klávesnice (numpad) |
+| `+ěščřžýáíé` | horní řada (stejné klávesy jako 1–9 a 0) |
 | `LC` / `RC` | levé / pravé tlačítko myši |
 | `ENTER` | Enter |
 | `D` | pauza v rozsahu D min–D max |
 | `D900` | pauza 900 ms |
 | `D2` | pauza 2 s |
 
-Příklad: `F1,D2,F2,D,F5,D`
+Příklad: `F1,D2,2,ě,D`
 
 ## MQTT (interní síť)
 
@@ -122,7 +124,7 @@ Přihlášení je v kódu napevno (`klikac` / `klikac`) — počítá se s tím,
 
 | Topic | Směr | Účel |
 | --- | --- | --- |
-| `esp32kbd/command` | app → destička | `F1`–`F8`, `ENTER`, `LC`, `RC` |
+| `esp32kbd/command` | app → destička | `F1`–`F8`, `0`–`9`, `+ěščřžýáíé`, `ENTER`, `LC`, `RC` |
 | `esp32kbd/macro` | app → destička | start/stop sekvence |
 | `esp32kbd/status` | destička | `online` / `offline` |
 | `esp32kbd/usb` | destička | HID připojeno |

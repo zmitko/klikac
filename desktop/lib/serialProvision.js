@@ -40,37 +40,47 @@ $p.RtsEnable = $true
 $p.Open()
 Start-Sleep -Milliseconds 120
 $p.RtsEnable = $false
-Start-Sleep -Milliseconds 800
 $ready = $false
-$drainUntil = (Get-Date).AddSeconds(3)
-while ((Get-Date) -lt $drainUntil) {
+$waitUntil = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $waitUntil) {
   try {
     $line = $p.ReadLine()
     if ($line) { Write-Output $line }
     if ($line -match "klikac firmware") { $ready = $true }
+    if ($ready -and $line -match "USB HID|Wi-Fi|KCFG") { break }
   } catch { }
 }
-Get-Content -LiteralPath $cmdPath | ForEach-Object {
+if (-not $ready) {
+  $p.Close()
+  Write-Output "KLOG no-banner"
+  exit 0
+}
+Get-Content -LiteralPath $cmdPath -Encoding UTF8 | ForEach-Object {
   $p.WriteLine($_)
-  Start-Sleep -Milliseconds 200
+  Start-Sleep -Milliseconds 300
 }
 $gotApply = $false
 $gotSaved = $false
-$end = (Get-Date).AddSeconds(25)
+$nvsFail = $false
+$emptyFail = $false
+$end = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $end) {
   try {
     $line = $p.ReadLine()
     if ($line) { Write-Output $line }
     if ($line -match "klikac firmware") { $ready = $true }
     if ($line -match "KLOG apply") { $gotApply = $true }
-    if ($line -match "KLOG apply-nvs-fail") { Write-Output $line; break }
-    if ($line -match "KLOG saved mqtt=" -and $line -notmatch "\(empty\)") { $gotSaved = $true; break }
+    if ($line -match "KLOG apply-empty") { $emptyFail = $true; break }
+    if ($line -match "KLOG apply-nvs-fail|KLOG nvs-save-fail|KLOG nvs-verify-fail") { $nvsFail = $true; break }
+    if ($line -match "KLOG saved mqtt=" -and $line -notmatch "\\(empty\\)") { $gotSaved = $true }
+    if ($line -match "KLOG restart") { break }
   } catch { }
 }
 $p.Close()
-if (-not $gotSaved -and -not $ready) { Write-Output "KLOG no-banner" }
-if (-not $gotApply -and -not $gotSaved) { Write-Output "KLOG no-apply" }
-if (-not $gotSaved) { Write-Output "KLOG no-persist" }
+if ($emptyFail) { Write-Output "KLOG no-ssid" }
+if ($nvsFail) { Write-Output "KLOG nvs-fail" }
+if (-not $gotApply -and -not $gotSaved -and -not $nvsFail -and -not $emptyFail) { Write-Output "KLOG no-apply" }
+if (-not $gotSaved -and -not $nvsFail -and -not $emptyFail) { Write-Output "KLOG no-persist" }
 `;
   fs.writeFileSync(psFile, script, "utf8");
   const { stdout, stderr } = await execFileAsync("powershell.exe", [
@@ -93,8 +103,13 @@ if (-not $gotSaved) { Write-Output "KLOG no-persist" }
     err.code = "NO_BANNER";
     throw err;
   }
-  if (/KLOG apply-nvs-fail|KLOG nvs-save-fail|KLOG nvs-verify-fail/.test(out)) {
-    throw new Error("Destička nedokázala uložit Wi-Fi/MQTT do paměti.");
+  if (/KLOG apply-empty|KLOG no-ssid/.test(out)) {
+    throw new Error("SSID nebo IP se na destičku nedostaly. Zkontroluj Wi-Fi v GUI a zkus USB init znovu.");
+  }
+  if (/KLOG nvs-fail|KLOG apply-nvs-fail|KLOG nvs-save-fail|KLOG nvs-verify-fail/.test(out)) {
+    const err = new Error("Destička nedokázala uložit Wi-Fi/MQTT do paměti.");
+    err.code = "NVS_FAIL";
+    throw err;
   }
   if (/KLOG no-apply/.test(out)) {
     throw new Error("Destička nepřijala KCFG APPLY. Zkus USB init znovu.");

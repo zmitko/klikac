@@ -176,15 +176,8 @@ class FirmwareService {
         mqttHost,
         onLine: (line) => this.setLog(line),
       });
-      this.state.status = "uploading";
-      this.setLog(`COM ${port.path}. Posílám Wi-Fi a IP ${mqttHost} (bez flashe)…`);
-      try {
-        await sendCfg();
-      } catch (provErr) {
-        if (provErr.code !== "NO_BANNER") {
-          throw provErr;
-        }
-        this.setLog("Na destičce není firmware, nahrávám…");
+      const flashThenCfg = async (why) => {
+        this.setLog(why);
         this.state.status = "preparing";
         const { firmwareBin, factoryBin, elf, version } = await this.resolveImages();
         const usbImage = elf || factoryBin || firmwareBin;
@@ -196,8 +189,21 @@ class FirmwareService {
         });
         this.setLog("Firmware nahraný. Posílám Wi-Fi a IP Klikače…");
         this.state.status = "uploading";
-        await new Promise((r) => setTimeout(r, 3500));
+        await new Promise((r) => setTimeout(r, 4000));
         await sendCfg();
+      };
+      this.state.status = "uploading";
+      this.setLog(`COM ${port.path}. Posílám Wi-Fi a IP ${mqttHost} (bez flashe)…`);
+      try {
+        await sendCfg();
+      } catch (provErr) {
+        if (provErr.code === "NO_BANNER") {
+          await flashThenCfg("Na destičce není firmware, nahrávám…");
+        } else if (provErr.code === "NVS_FAIL") {
+          await flashThenCfg("Paměť destičky odmítla zápis, mažu ji nahráním firmware a zkouším znovu…");
+        } else {
+          throw provErr;
+        }
       }
       this.state.status = "ok";
       this.state.progress = 1;

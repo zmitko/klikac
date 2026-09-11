@@ -21,10 +21,50 @@ for (let i = 0; i < 5; i++) {
     <span class="n">${i + 1}</span>
     <div>
       <input class="name" data-slot="${i}" data-field="name" placeholder="volitelný název">
-      <input class="seq" data-slot="${i}" data-field="seq" placeholder="např. F1,D,F2">
+      <input class="seq" data-slot="${i}" data-field="seq" placeholder="např. F1,D,2,ě">
     </div>`;
   slotsRoot.appendChild(wrap);
 }
+
+const tokenInsert = $("token-insert");
+let lastSeqInput = null;
+[
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+  ["+", "ě", "š", "č", "ř", "ž", "ý", "á", "í", "é"],
+].forEach((row) => {
+  const wrap = document.createElement("div");
+  wrap.className = "token-insert-row";
+  row.forEach((tok) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "token-chip";
+    btn.dataset.insert = tok;
+    btn.textContent = tok;
+    wrap.appendChild(btn);
+  });
+  tokenInsert.appendChild(wrap);
+});
+slotsRoot.addEventListener("focusin", (ev) => {
+  if (ev.target.matches("input[data-field=\"seq\"]")) {
+    lastSeqInput = ev.target;
+  }
+});
+tokenInsert.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-insert]");
+  if (!btn) {
+    return;
+  }
+  const el = lastSeqInput || slotsRoot.querySelector("input[data-field=\"seq\"]");
+  if (!el) {
+    return;
+  }
+  const tok = btn.dataset.insert;
+  const cur = el.value.trim();
+  el.value = cur ? `${cur},${tok}` : tok;
+  el.focus();
+  lastSeqInput = el;
+  scheduleSave();
+});
 
 let saveTimer = 0;
 

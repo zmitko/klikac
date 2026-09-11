@@ -13,6 +13,7 @@
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <Preferences.h>
+#include <nvs_flash.h>
 #include <esp_system.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
@@ -34,6 +35,8 @@ static volatile bool keys_need_abort = false;
 static volatile int pending_fn = 0;
 static volatile int pending_mouse = 0;
 static volatile bool pending_enter = false;
+static volatile uint8_t pending_raw = 0;
+static char pending_raw_label[12];
 static volatile bool macro_stop_req = false;
 static bool ota_ready = false;
 static bool ota_started = false;
@@ -82,6 +85,14 @@ static const uint8_t kFnHid[9] = {
     0, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8,
 };
 
+// TinyUSB HID usage: numpad 0–9, then number-row 0–9 (+ěščřžýáíé on Czech).
+static const uint8_t kHidKeypad[10] = {
+    0x62, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61,
+};
+static const uint8_t kHidDigitRow[10] = {
+    0x27, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
+};
+
 static void usb_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg;
     (void)base;
@@ -101,6 +112,7 @@ static void usb_event(void *arg, esp_event_base_t base, int32_t id, void *data) 
             pending_fn = 0;
             pending_mouse = 0;
             pending_enter = false;
+            pending_raw = 0;
             break;
         case ARDUINO_USB_SUSPEND_EVENT:
             break;
@@ -139,6 +151,28 @@ static void human_key(uint8_t hid_key) {
         idle_poll();
     }
     Keyboard.release(hid_key);
+    Keyboard.releaseAll();
+    hid_holding = false;
+    Serial.print(" hold=");
+    Serial.print(hold_ms);
+    Serial.println("ms");
+}
+
+static void human_key_raw(uint8_t raw) {
+    if (!usb_mounted || !raw) {
+        return;
+    }
+    const uint32_t hold_ms = human_hold_ms();
+    hid_holding = true;
+    Keyboard.pressRaw(raw);
+    const uint32_t start = millis();
+    while ((millis() - start) < hold_ms) {
+        if (!usb_mounted || keys_need_abort) {
+            break;
+        }
+        idle_poll();
+    }
+    Keyboard.releaseRaw(raw);
     Keyboard.releaseAll();
     hid_holding = false;
     Serial.print(" hold=");
@@ -230,6 +264,49 @@ static int parse_mouse(const char *s) {
         return 2;
     }
     return 0;
+}
+
+static void send_raw_key(uint8_t raw, const char *label) {
+    if (!raw) {
+        return;
+    }
+    if (!usb_mounted) {
+        Serial.println("key ignored: USB not mounted");
+        return;
+    }
+    Serial.print("HID ");
+    Serial.print(label && label[0] ? label : "?");
+    human_key_raw(raw);
+    if (mqtt.connected() && label && label[0]) {
+        mqtt.publish(MQTT_TOPIC_ACK, label, false);
+    }
+}
+
+static bool parse_seq_key(const char *s, uint8_t *raw, char *label, size_t labellen) {
+    if (!s || !s[0] || !raw || !label || labellen < 2) {
+        return false;
+    }
+    if (s[0] >= '0' && s[0] <= '9' && s[1] == '\0') {
+        *raw = kHidKeypad[s[0] - '0'];
+        label[0] = s[0];
+        label[1] = '\0';
+        return true;
+    }
+    static const char *const czLo[] = {"+", "ě", "š", "č", "ř", "ž", "ý", "á", "í", "é"};
+    static const char *const czHi[] = {"+", "Ě", "Š", "Č", "Ř", "Ž", "Ý", "Á", "Í", "É"};
+    static const uint8_t czHid[] = {
+        kHidDigitRow[1], kHidDigitRow[2], kHidDigitRow[3], kHidDigitRow[4], kHidDigitRow[5],
+        kHidDigitRow[6], kHidDigitRow[7], kHidDigitRow[8], kHidDigitRow[9], kHidDigitRow[0],
+    };
+    for (size_t i = 0; i < 10; i++) {
+        if (strcmp(s, czLo[i]) == 0 || strcmp(s, czHi[i]) == 0) {
+            *raw = czHid[i];
+            strncpy(label, czLo[i], labellen - 1);
+            label[labellen - 1] = '\0';
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool parse_enter(const char *s) {
@@ -551,6 +628,12 @@ static void macro_step(MacroSlot *slot, int idx) {
         send_enter();
         return;
     }
+    uint8_t raw = 0;
+    char label[12];
+    if (parse_seq_key(token, &raw, label, sizeof(label))) {
+        send_raw_key(raw, label);
+        return;
+    }
     Serial.print("skip: ");
     Serial.println(token);
 }
@@ -625,6 +708,14 @@ static void mqtt_callback(char *topic, byte *payload, unsigned int len) {
         pending_enter = true;
         return;
     }
+    uint8_t raw = 0;
+    char label[12];
+    if (parse_seq_key(buf, &raw, label, sizeof(label))) {
+        strncpy(pending_raw_label, label, sizeof(pending_raw_label) - 1);
+        pending_raw_label[sizeof(pending_raw_label) - 1] = '\0';
+        pending_raw = raw;
+        return;
+    }
     Serial.print("command ignored: ");
     Serial.println(buf);
 }
@@ -633,6 +724,7 @@ static void mqtt_disconnect_cleanup() {
     pending_fn = 0;
     pending_mouse = 0;
     pending_enter = false;
+    pending_raw = 0;
     macro_stop_req = true;
     keys_need_abort = true;
     mqtt_ready_at = 0;
@@ -640,27 +732,65 @@ static void mqtt_disconnect_cleanup() {
 
 static void wifi_begin_now(const char *why);
 
-static bool cfg_save() {
+static void copy_cfg_arg(char *dst, size_t dstlen, const char *src) {
+    while (*src == ' ' || *src == '\t') {
+        src++;
+    }
+    strncpy(dst, src, dstlen - 1);
+    dst[dstlen - 1] = 0;
+    size_t n = strlen(dst);
+    while (n > 0 && (dst[n - 1] == ' ' || dst[n - 1] == '\t')) {
+        dst[--n] = 0;
+    }
+}
+
+static bool cfg_write_and_verify() {
     if (!prefs.begin("klikac", false)) {
         Serial.println("KLOG nvs-save-fail");
         return false;
     }
-    prefs.putString("wifi", wifi_ssid);
-    prefs.putString("pass", wifi_pass);
-    prefs.putString("mqtt", mqtt_host);
+    const size_t nw = prefs.putString("wifi", wifi_ssid);
+    const size_t np = prefs.putString("pass", wifi_pass);
+    const size_t nm = prefs.putString("mqtt", mqtt_host);
+    const String w = prefs.getString("wifi", "");
+    const String m = prefs.getString("mqtt", "");
     prefs.end();
-    if (!prefs.begin("klikac", true)) {
-        Serial.println("KLOG nvs-verify-fail");
+    Serial.print("KLOG nvs-put ");
+    Serial.print(nw);
+    Serial.print('/');
+    Serial.print(np);
+    Serial.print('/');
+    Serial.println(nm);
+    Serial.print("KLOG saved wifi=");
+    Serial.println(w.length() ? w.c_str() : "(empty)");
+    Serial.print("KLOG saved mqtt=");
+    Serial.println(m.length() ? m.c_str() : "(empty)");
+    return wifi_ssid[0] && mqtt_host[0] && w == wifi_ssid && m == mqtt_host;
+}
+
+static bool cfg_save() {
+    if (!wifi_ssid[0] || !mqtt_host[0]) {
+        Serial.print("KLOG apply-empty wifi=");
+        Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
+        Serial.print(" mqtt=");
+        Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
         return false;
     }
-    const String w = prefs.isKey("wifi") ? prefs.getString("wifi", "") : "";
-    const String m = prefs.isKey("mqtt") ? prefs.getString("mqtt", "") : "";
-    prefs.end();
-    Serial.print("KLOG saved wifi=");
-    Serial.println(w.length() ? w : "(empty)");
-    Serial.print("KLOG saved mqtt=");
-    Serial.println(m.length() ? m : "(empty)");
-    return w.length() > 0 && m.length() > 0;
+    if (cfg_write_and_verify()) {
+        return true;
+    }
+    Serial.println("KLOG nvs-retry");
+    if (prefs.begin("klikac", false)) {
+        prefs.clear();
+        prefs.end();
+        if (cfg_write_and_verify()) {
+            return true;
+        }
+    }
+    Serial.println("KLOG nvs-erase");
+    nvs_flash_erase();
+    nvs_flash_init();
+    return cfg_write_and_verify();
 }
 
 static void cfg_load() {
@@ -694,27 +824,29 @@ static void cfg_load() {
 
 static void cfg_handle_line(char *line) {
     if (strncmp(line, "KCFG WIFI ", 10) == 0) {
-        strncpy(wifi_ssid, line + 10, sizeof(wifi_ssid) - 1);
-        wifi_ssid[sizeof(wifi_ssid) - 1] = 0;
-        Serial.println("KLOG wifi-ok");
+        copy_cfg_arg(wifi_ssid, sizeof(wifi_ssid), line + 10);
+        Serial.print("KLOG wifi-ok n=");
+        Serial.println(strlen(wifi_ssid));
         return;
     }
     if (strncmp(line, "KCFG PASS ", 10) == 0) {
-        strncpy(wifi_pass, line + 10, sizeof(wifi_pass) - 1);
-        wifi_pass[sizeof(wifi_pass) - 1] = 0;
-        Serial.println("KLOG pass-ok");
+        copy_cfg_arg(wifi_pass, sizeof(wifi_pass), line + 10);
+        Serial.print("KLOG pass-ok n=");
+        Serial.println(strlen(wifi_pass));
         return;
     }
     if (strncmp(line, "KCFG MQTT ", 10) == 0) {
-        strncpy(mqtt_host, line + 10, sizeof(mqtt_host) - 1);
-        mqtt_host[sizeof(mqtt_host) - 1] = 0;
-        Serial.println("KLOG mqtt-ok");
+        copy_cfg_arg(mqtt_host, sizeof(mqtt_host), line + 10);
+        Serial.print("KLOG mqtt-ok n=");
+        Serial.println(strlen(mqtt_host));
         return;
     }
     if (strcmp(line, "KCFG APPLY") == 0) {
         const bool ok = cfg_save();
-        Serial.print("KLOG apply mqtt=");
-        Serial.println(mqtt_host);
+        Serial.print("KLOG apply wifi=");
+        Serial.print(wifi_ssid[0] ? wifi_ssid : "(empty)");
+        Serial.print(" mqtt=");
+        Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
         if (!ok) {
             Serial.println("KLOG apply-nvs-fail");
             return;
@@ -778,6 +910,7 @@ static bool mqtt_connect() {
     pending_fn = 0;
     pending_mouse = 0;
     pending_enter = false;
+    pending_raw = 0;
     Serial.println("MQTT connected");
     return true;
 }
@@ -819,7 +952,7 @@ static void wifi_begin_now(const char *why) {
     Serial.print(why);
     Serial.print(" ");
     Serial.println(wifi_ssid);
-    WiFi.persistent(true);
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(OTA_HOSTNAME);
     WiFi.setSleep(false);
@@ -959,6 +1092,7 @@ void loop() {
         pending_fn = 0;
         pending_mouse = 0;
         pending_enter = false;
+        pending_raw = 0;
         macros_clear();
         if (hid_ok) {
             Keyboard.releaseAll();
@@ -979,7 +1113,7 @@ void loop() {
 
     if (usb_mounted && (millis() - last_hid_keep) >= HID_KEEPALIVE_MS) {
         last_hid_keep = millis();
-        if (!hid_holding && !macros_any_active() && !pending_fn && !pending_mouse && !pending_enter) {
+        if (!hid_holding && !macros_any_active() && !pending_fn && !pending_mouse && !pending_enter && !pending_raw) {
             Keyboard.releaseAll();
         }
     }
@@ -1053,6 +1187,16 @@ void loop() {
         pending_enter = false;
         if (usb_mounted) {
             send_enter();
+        } else {
+            Serial.println("pending key dropped: USB not mounted");
+        }
+    }
+
+    const uint8_t raw = pending_raw;
+    if (raw != 0) {
+        pending_raw = 0;
+        if (usb_mounted) {
+            send_raw_key(raw, pending_raw_label);
         } else {
             Serial.println("pending key dropped: USB not mounted");
         }
