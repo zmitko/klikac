@@ -375,6 +375,14 @@ $("app-update").addEventListener("click", async () => {
   }
 });
 
+$("clear-log").addEventListener("click", async () => {
+  try {
+    apply(await window.ovladac.clearLog());
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
 $("health-check").addEventListener("click", async () => {
   $("health-check").disabled = true;
   $("esp-status").textContent = "Kontroluji…";

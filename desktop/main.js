@@ -180,6 +180,12 @@ function bindIpc() {
     });
   });
   ipcMain.handle("ota-firmware", async () => firmware.ota());
+  ipcMain.handle("clear-log", () => {
+    if (appLog) {
+      appLog.clear();
+    }
+    return attachSnap(core.snapshot());
+  });
   ipcMain.handle("health-check", async () => {
     if (broker) {
       broker.refreshLan();

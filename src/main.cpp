@@ -12,8 +12,10 @@
 #include <HTTPUpdate.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
-#include <Preferences.h>
+#include <stddef.h>
+#include <nvs.h>
 #include <nvs_flash.h>
+#include <esp_flash.h>
 #include <esp_system.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
@@ -79,7 +81,28 @@ static char wifi_pass[65];
 static char mqtt_host[48];
 static char serial_line[220];
 static size_t serial_len = 0;
-static Preferences prefs;
+
+#define CFG_FLASH_ADDR 0xF00000u
+#define CFG_FLASH_MAGIC 0x3146474Bu
+
+struct CfgFlash {
+    uint32_t magic;
+    char wifi[36];
+    char pass[68];
+    char mqtt[48];
+    uint32_t sum;
+};
+
+static uint32_t cfg_flash_sum(const CfgFlash *blob) {
+    uint32_t s = 2166136261u;
+    const uint8_t *p = reinterpret_cast<const uint8_t *>(blob);
+    const size_t n = offsetof(CfgFlash, sum);
+    for (size_t i = 0; i < n; i++) {
+        s ^= p[i];
+        s *= 16777619u;
+    }
+    return s;
+}
 
 static const uint8_t kFnHid[9] = {
     0, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8,
@@ -744,28 +767,136 @@ static void copy_cfg_arg(char *dst, size_t dstlen, const char *src) {
     }
 }
 
-static bool cfg_write_and_verify() {
-    if (!prefs.begin("klikac", false)) {
-        Serial.println("KLOG nvs-save-fail");
+static bool cfg_nvs_init() {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        err = nvs_flash_init();
+    }
+    return err == ESP_OK;
+}
+
+static bool cfg_nvs_write_and_verify() {
+    if (!cfg_nvs_init()) {
+        Serial.println("KLOG nvs-init-fail");
         return false;
     }
-    const size_t nw = prefs.putString("wifi", wifi_ssid);
-    const size_t np = prefs.putString("pass", wifi_pass);
-    const size_t nm = prefs.putString("mqtt", mqtt_host);
-    const String w = prefs.getString("wifi", "");
-    const String m = prefs.getString("mqtt", "");
-    prefs.end();
-    Serial.print("KLOG nvs-put ");
-    Serial.print(nw);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("klikac", NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        Serial.print("KLOG nvs-open ");
+        Serial.println((int)err);
+        return false;
+    }
+    const esp_err_t e1 = nvs_set_str(handle, "wifi", wifi_ssid);
+    const esp_err_t e2 = nvs_set_str(handle, "pass", wifi_pass);
+    const esp_err_t e3 = nvs_set_str(handle, "mqtt", mqtt_host);
+    const esp_err_t ec = nvs_commit(handle);
+    char w[33] = {0};
+    char m[48] = {0};
+    size_t lw = sizeof(w);
+    size_t lm = sizeof(m);
+    const esp_err_t gw = nvs_get_str(handle, "wifi", w, &lw);
+    const esp_err_t gm = nvs_get_str(handle, "mqtt", m, &lm);
+    nvs_close(handle);
+    Serial.print("KLOG nvs-set ");
+    Serial.print((int)e1);
     Serial.print('/');
-    Serial.print(np);
+    Serial.print((int)e2);
     Serial.print('/');
-    Serial.println(nm);
+    Serial.print((int)e3);
+    Serial.print(" c=");
+    Serial.println((int)ec);
     Serial.print("KLOG saved wifi=");
-    Serial.println(w.length() ? w.c_str() : "(empty)");
+    Serial.println(gw == ESP_OK && w[0] ? w : "(empty)");
     Serial.print("KLOG saved mqtt=");
-    Serial.println(m.length() ? m.c_str() : "(empty)");
-    return wifi_ssid[0] && mqtt_host[0] && w == wifi_ssid && m == mqtt_host;
+    Serial.println(gm == ESP_OK && m[0] ? m : "(empty)");
+    return e1 == ESP_OK && e3 == ESP_OK && ec == ESP_OK && gw == ESP_OK && gm == ESP_OK
+        && strcmp(w, wifi_ssid) == 0 && strcmp(m, mqtt_host) == 0;
+}
+
+static bool cfg_flash_write_and_verify() {
+    CfgFlash blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.magic = CFG_FLASH_MAGIC;
+    strncpy(blob.wifi, wifi_ssid, sizeof(blob.wifi) - 1);
+    strncpy(blob.pass, wifi_pass, sizeof(blob.pass) - 1);
+    strncpy(blob.mqtt, mqtt_host, sizeof(blob.mqtt) - 1);
+    blob.sum = cfg_flash_sum(&blob);
+    esp_err_t err = esp_flash_erase_region(NULL, CFG_FLASH_ADDR, 4096);
+    if (err != ESP_OK) {
+        Serial.print("KLOG flash-erase ");
+        Serial.println((int)err);
+        return false;
+    }
+    err = esp_flash_write(NULL, &blob, CFG_FLASH_ADDR, sizeof(blob));
+    if (err != ESP_OK) {
+        Serial.print("KLOG flash-write ");
+        Serial.println((int)err);
+        return false;
+    }
+    CfgFlash readback;
+    memset(&readback, 0, sizeof(readback));
+    err = esp_flash_read(NULL, &readback, CFG_FLASH_ADDR, sizeof(readback));
+    if (err != ESP_OK || readback.magic != CFG_FLASH_MAGIC || readback.sum != cfg_flash_sum(&readback)) {
+        Serial.print("KLOG flash-read ");
+        Serial.println((int)err);
+        return false;
+    }
+    Serial.print("KLOG flash-saved wifi=");
+    Serial.println(readback.wifi);
+    Serial.print("KLOG flash-saved mqtt=");
+    Serial.println(readback.mqtt);
+    return strcmp(readback.wifi, wifi_ssid) == 0 && strcmp(readback.mqtt, mqtt_host) == 0;
+}
+
+static bool cfg_flash_load() {
+    CfgFlash blob;
+    memset(&blob, 0, sizeof(blob));
+    if (esp_flash_read(NULL, &blob, CFG_FLASH_ADDR, sizeof(blob)) != ESP_OK) {
+        return false;
+    }
+    if (blob.magic != CFG_FLASH_MAGIC || blob.sum != cfg_flash_sum(&blob) || !blob.wifi[0] || !blob.mqtt[0]) {
+        return false;
+    }
+    strncpy(wifi_ssid, blob.wifi, sizeof(wifi_ssid) - 1);
+    strncpy(wifi_pass, blob.pass, sizeof(wifi_pass) - 1);
+    strncpy(mqtt_host, blob.mqtt, sizeof(mqtt_host) - 1);
+    wifi_ssid[sizeof(wifi_ssid) - 1] = 0;
+    wifi_pass[sizeof(wifi_pass) - 1] = 0;
+    mqtt_host[sizeof(mqtt_host) - 1] = 0;
+    Serial.println("KLOG cfg-flash");
+    return true;
+}
+
+static bool cfg_nvs_load() {
+    if (!cfg_nvs_init()) {
+        return false;
+    }
+    nvs_handle_t handle;
+    if (nvs_open("klikac", NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+    char w[33] = {0};
+    char p[65] = {0};
+    char m[48] = {0};
+    size_t lw = sizeof(w);
+    size_t lp = sizeof(p);
+    size_t lm = sizeof(m);
+    const bool okW = nvs_get_str(handle, "wifi", w, &lw) == ESP_OK && w[0];
+    const bool okP = nvs_get_str(handle, "pass", p, &lp) == ESP_OK;
+    const bool okM = nvs_get_str(handle, "mqtt", m, &lm) == ESP_OK && m[0];
+    nvs_close(handle);
+    if (!okW || !okM) {
+        return false;
+    }
+    strncpy(wifi_ssid, w, sizeof(wifi_ssid) - 1);
+    if (okP) {
+        strncpy(wifi_pass, p, sizeof(wifi_pass) - 1);
+    }
+    strncpy(mqtt_host, m, sizeof(mqtt_host) - 1);
+    Serial.println("KLOG cfg-nvs");
+    return true;
 }
 
 static bool cfg_save() {
@@ -776,50 +907,29 @@ static bool cfg_save() {
         Serial.println(mqtt_host[0] ? mqtt_host : "(empty)");
         return false;
     }
-    if (cfg_write_and_verify()) {
+    if (cfg_nvs_write_and_verify()) {
         return true;
-    }
-    Serial.println("KLOG nvs-retry");
-    if (prefs.begin("klikac", false)) {
-        prefs.clear();
-        prefs.end();
-        if (cfg_write_and_verify()) {
-            return true;
-        }
     }
     Serial.println("KLOG nvs-erase");
     nvs_flash_erase();
     nvs_flash_init();
-    return cfg_write_and_verify();
+    if (cfg_nvs_write_and_verify()) {
+        return true;
+    }
+    Serial.println("KLOG flash-fallback");
+    return cfg_flash_write_and_verify();
 }
 
 static void cfg_load() {
     wifi_ssid[0] = 0;
     wifi_pass[0] = 0;
     mqtt_host[0] = 0;
-    if (!prefs.begin("klikac", false)) {
-        Serial.println("KLOG nvs-fail");
+    if (cfg_nvs_load() || cfg_flash_load()) {
         return;
     }
-    const String w = prefs.isKey("wifi") ? prefs.getString("wifi", "") : "";
-    const String p = prefs.isKey("pass") ? prefs.getString("pass", "") : "";
-    const String m = prefs.isKey("mqtt") ? prefs.getString("mqtt", "") : "";
-    prefs.end();
-    if (w.length() > 0) {
-        strncpy(wifi_ssid, w.c_str(), sizeof(wifi_ssid) - 1);
-    } else {
-        strncpy(wifi_ssid, WIFI_SSID, sizeof(wifi_ssid) - 1);
-    }
-    if (p.length() > 0) {
-        strncpy(wifi_pass, p.c_str(), sizeof(wifi_pass) - 1);
-    } else {
-        strncpy(wifi_pass, WIFI_PASSWORD, sizeof(wifi_pass) - 1);
-    }
-    if (m.length() > 0) {
-        strncpy(mqtt_host, m.c_str(), sizeof(mqtt_host) - 1);
-    } else {
-        strncpy(mqtt_host, MQTT_HOST, sizeof(mqtt_host) - 1);
-    }
+    strncpy(wifi_ssid, WIFI_SSID, sizeof(wifi_ssid) - 1);
+    strncpy(wifi_pass, WIFI_PASSWORD, sizeof(wifi_pass) - 1);
+    strncpy(mqtt_host, MQTT_HOST, sizeof(mqtt_host) - 1);
 }
 
 static void cfg_handle_line(char *line) {

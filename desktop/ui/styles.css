@@ -114,6 +114,7 @@ h2 {
   grid-template-columns: repeat(8, 1fr);
   gap: 8px;
   margin-bottom: 8px;
+  flex: 0 0 auto;
 }
 
 .grid-3 {
@@ -121,7 +122,8 @@ h2 {
   grid-template-columns: 1.15fr 1.25fr 0.9fr;
   gap: 8px;
   align-items: stretch;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .col-left,
@@ -291,17 +293,26 @@ h2 {
 
 .log-card {
   margin-top: 8px;
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-height: 96px;
   padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-card .card-head {
+  margin-bottom: 6px;
 }
 
 .log-card h2 {
-  margin-bottom: 4px;
+  margin-bottom: 0;
 }
 
 .proto-log {
   margin: 0;
-  max-height: 72px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   font-size: 11px;
   line-height: 1.35;

@@ -1,8 +1,15 @@
 class AppLog {
-  constructor({ onChange, limit = 180 }) {
+  constructor({ onChange, limit = 500 }) {
     this.onChange = onChange;
     this.limit = limit;
     this.lines = [];
+  }
+
+  clear() {
+    this.lines = [];
+    if (typeof this.onChange === "function") {
+      this.onChange();
+    }
   }
 
   push(source, message) {

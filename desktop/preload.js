@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("ovladac", {
   flashFirmware: () => ipcRenderer.invoke("flash-firmware"),
   otaFirmware: () => ipcRenderer.invoke("ota-firmware"),
   healthCheck: () => ipcRenderer.invoke("health-check"),
+  clearLog: () => ipcRenderer.invoke("clear-log"),
   onState: (handler) => {
     ipcRenderer.on("state", (_event, snap) => handler(snap));
   },

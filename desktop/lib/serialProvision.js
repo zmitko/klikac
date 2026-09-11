@@ -72,7 +72,7 @@ while ((Get-Date) -lt $end) {
     if ($line -match "KLOG apply") { $gotApply = $true }
     if ($line -match "KLOG apply-empty") { $emptyFail = $true; break }
     if ($line -match "KLOG apply-nvs-fail|KLOG nvs-save-fail|KLOG nvs-verify-fail") { $nvsFail = $true; break }
-    if ($line -match "KLOG saved mqtt=" -and $line -notmatch "\\(empty\\)") { $gotSaved = $true }
+    if ($line -match "KLOG (flash-)?saved mqtt=" -and $line -notmatch "\\(empty\\)") { $gotSaved = $true }
     if ($line -match "KLOG restart") { break }
   } catch { }
 }
